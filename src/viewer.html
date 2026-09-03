@@ -44,6 +44,15 @@
   #transport button:hover { color:var(--fg); background:#1e2c3c; }
   #transport button.live { color:#08101a; background:var(--accent); font-weight:600; }
   #transport button:disabled { opacity:.35; cursor:default; }
+  #transport button.busy { color:var(--accent); background:#16202c; opacity:1;
+    animation:blink 1s ease-in-out infinite; }
+  #busy { position:fixed; top:0; left:0; right:0; height:2px; overflow:hidden;
+    opacity:0; transition:opacity .18s; pointer-events:none; }
+  #busy.on { opacity:1; }
+  #busy i { display:block; height:100%; width:26%; background:var(--accent);
+    animation:slide 1.05s ease-in-out infinite; }
+  @keyframes slide { from { transform:translateX(-105%); } to { transform:translateX(480%); } }
+  @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:.45; } }
   #transport button:disabled:hover { color:var(--dim); background:#16202c; }
   #strip { display:flex; gap:3px; flex:1 1 220px; min-height:26px; }
   #strip .seg { position:relative; flex:1 1 0; min-width:6px; border-radius:4px;
@@ -59,6 +68,7 @@
 </style>
 </head>
 <body>
+<div id="busy"><i></i></div>
 <div class="panel" id="brand"><h1>gitdiff3d</h1><div id="label">loading...</div></div>
 <div class="panel" id="where"><div class="path"></div><div class="meta"></div></div>
 <div class="panel" id="keys">
@@ -551,6 +561,7 @@ function syncPage(doc, language, typing, live_caret) {
 /* ---------- transport ---------- */
 const CONTEXTS = [0, 3, 8, 20, 60];
 let sceneContext = 3; // lines of context the scene we hold was built with
+let fetching = null;  // the width being fetched, while a reload is in flight
 const RATES = [0.25, 0.5, 0.7, 1, 2.5, 6];
 const NORMAL = RATES.indexOf(1);
 let data = null;
@@ -612,6 +623,7 @@ const ACTIONS = {
     syncFrontBtn();
   },
   ctx: () => {
+    if (fetching !== null) return; // one reload at a time
     const step = CONTEXTS.indexOf(sceneContext);
     loadScene(CONTEXTS[(step + 1) % CONTEXTS.length]);
   },
@@ -647,8 +659,12 @@ function syncFrontBtn() {
 }
 
 function syncCtxBtn() {
-  button("ctx").textContent = "ctx " + sceneContext;
-  button("ctx").classList.toggle("live", sceneContext !== 3);
+  const waiting = fetching !== null;
+  button("ctx").textContent = "ctx " + (waiting ? fetching + " .." : sceneContext);
+  button("ctx").classList.toggle("live", !waiting && sceneContext !== 3);
+  button("ctx").classList.toggle("busy", waiting);
+  button("ctx").disabled = waiting;
+  document.getElementById("busy").classList.toggle("on", waiting);
 }
 
 function syncFitBtn() {
@@ -897,11 +913,14 @@ function loadScene(context) {
   const wanted = context === null ? null : context;
   const first = data === null;
   const at0 = first ? 0 : at;
+  fetching = wanted === null ? sceneContext : wanted;
+  syncCtxBtn();
   return fetch(sceneURL(wanted))
     .then((r) => r.json())
     .then((loaded) => {
       data = loaded;
       sceneContext = data.meta.context === undefined ? 3 : data.meta.context;
+      fetching = null;
       describeScene();
       strip.innerHTML = "";
       buildStrip();
@@ -917,6 +936,8 @@ function loadScene(context) {
       if (first) requestAnimationFrame(frame);
     })
     .catch((err) => {
+      fetching = null;
+      syncCtxBtn();
       document.getElementById("label").textContent = "cannot load the scene: " + err;
     });
 }
