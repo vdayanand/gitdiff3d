@@ -19,18 +19,20 @@ options:
   --max-hunks <n>  keep only the first n hunks (default: all)
   --order <how>    story (definitions before their callers, schema before docs)
                    or git (the order git prints them in). default: story
+  --context <n>    lines of unchanged code around each hunk (default: 3)
   --json       print the scene model, do not serve
   --no-open    serve without opening a browser
   -h, --help   this message`;
 
 function readArgs(argv) {
-  const flags = { port: 0, json: false, open: true, maxHunks: 0, order: "story" };
+  const flags = { port: 0, json: false, open: true, maxHunks: 0, order: "story", context: 3 };
   const revisions = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--port") flags.port = Number(argv[(i += 1)]);
     else if (arg === "--max-hunks") flags.maxHunks = Number(argv[(i += 1)]);
     else if (arg === "--order") flags.order = argv[(i += 1)];
+    else if (arg === "--context" || arg === "-U") flags.context = Number(argv[(i += 1)]);
     else if (arg === "--json") flags.json = true;
     else if (arg === "--no-open") flags.open = false;
     else if (arg === "-h" || arg === "--help") flags.help = true;
@@ -50,13 +52,25 @@ async function main() {
   }
   const cwd = process.cwd();
   const root = repoRoot(cwd);
-  const diff = parseDiff(diffText(revisions, root));
   const newSide = newSideOf(revisions, root);
   const readSource = (filePath) => sourceOf(newSide, filePath, root);
-  const scene = orderHunks(
-    buildScene(diff, { root, label: describe(revisions, root) }, readSource, flags.maxHunks),
-    flags.order,
-  );
+  const label = describe(revisions, root);
+
+  // The player can ask for a wider view of the surrounding code, which means
+  // re-running the diff; each width is built once and kept.
+  const built = new Map();
+  const sceneFor = (context) => {
+    const lines = context === null ? flags.context : context;
+    if (!built.has(lines)) {
+      const diff = parseDiff(diffText(revisions, root, lines));
+      built.set(lines, orderHunks(
+        buildScene(diff, { root, label, context: lines }, readSource, flags.maxHunks),
+        flags.order,
+      ));
+    }
+    return built.get(lines);
+  };
+  const scene = sceneFor(null);
 
   if (flags.json) {
     console.log(JSON.stringify(scene, null, 2));
@@ -67,7 +81,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  const port = await serve(scene, flags.port);
+  const port = await serve(sceneFor, flags.port);
   const url = "http://127.0.0.1:" + port + "/";
   console.log(scene.totals.files + " files, " + scene.totals.shown + " of " +
     scene.totals.hunks + " hunks, +" +

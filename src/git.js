@@ -14,8 +14,8 @@ const git = (args, cwd) =>
 
 const repoRoot = (cwd) => git(["rev-parse", "--show-toplevel"], cwd).trim();
 
-const diffText = (revisions, cwd) =>
-  git(["diff", "--no-color", "--no-ext-diff", "-U3", ...revisions], cwd);
+const diffText = (revisions, cwd, context) =>
+  git(["diff", "--no-color", "--no-ext-diff", "-U" + context, ...revisions], cwd);
 
 const headLabel = (cwd) => {
   try {

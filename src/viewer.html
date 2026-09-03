@@ -65,7 +65,7 @@
   <b>b</b>/<b>r</b> rewind &middot;
   <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>m</b> sound &middot; <b>v</b> voice &middot; <b>f</b> full &middot; <b>a</b> autoplay<br>
   <b>wheel</b> or <b>j</b>/<b>k</b> scroll &middot; <b>ctrl-wheel</b> or <b>+</b>/<b>&minus;</b> zoom &middot;
-  <b>shift-wheel</b> sideways &middot; <b>0</b> refit and follow &middot;
+  <b>shift-wheel</b> sideways &middot; <b>0</b> refit and follow &middot; <b>c</b> context &middot; <b>l</b> overlay &middot;
   <b>drag</b> orbit &middot; <b>?</b> hide this<br>
   every change is typed out: <span class="del">removals erase</span>,
   <span class="add">additions type in</span>
@@ -83,6 +83,8 @@
     <button data-act="voice" title="read the note aloud (v)">voice</button>
     <button data-act="zoomIn" title="zoom in (=)">+</button>
     <button data-act="zoomOut" title="zoom out (-)">&minus;</button>
+    <button data-act="overlay" title="both versions at once, removals behind (l)">overlay</button>
+    <button data-act="ctx" title="lines of context around each change (c)">ctx 3</button>
     <button data-act="fit" title="back to fit (0)">fit</button>
     <button data-act="full" title="fill the screen (f)">full</button>
   </div>
@@ -283,6 +285,7 @@ const WINDOW = 22;
 let zoom = 1;
 let panX = 0;
 let follow = true;
+let overlay = false;
 let viewRow = 0;
 let caretRow = 0;
 
@@ -367,6 +370,18 @@ function timelineOf(hunk) {
   return { edits, total, strokes, keystrokes, starts };
 }
 
+/* Context lines within `near` of a change. Narrowing is done here rather than by
+   refetching; widening past what the scene carries needs a new diff. */
+function nearChange(hunk, near) {
+  const changed = hunk.lines.map((line, at) => (line.kind === "ctx" ? -1 : at)).filter((at) => at >= 0);
+  const keep = new Set();
+  hunk.lines.forEach((line, at) => {
+    if (line.kind !== "ctx") return keep.add(at);
+    if (changed.some((change) => Math.abs(change - at) <= near)) keep.add(at);
+  });
+  return keep;
+}
+
 /* what the file looks like at time t: the layout falls out of hunk order */
 function documentAt(hunk, timeline, t) {
   const state = new Map();
@@ -387,7 +402,9 @@ function documentAt(hunk, timeline, t) {
   });
 
   const doc = [];
+  const near = shownContext === null ? null : nearChange(hunk, shownContext);
   hunk.lines.forEach((line, key) => {
+    if (near !== null && !near.has(key)) return;
     if (line.kind === "ctx") {
       doc.push({ key, kind: "ctx", indent: indentOf(line.text),
         body: bodyOf(line.text), caret: null, number: line.newNo });
@@ -399,6 +416,52 @@ function documentAt(hunk, timeline, t) {
       caret: shown.caret, number: line.kind === "del" ? line.oldNo : line.newNo });
   });
   return doc;
+}
+
+/* Both versions of a hunk at once, stacked in depth: what a run replaced sits
+   directly behind its replacement, so a rewrite reads as one thing seen through
+   another. A run with nothing opposite it leaves that plane empty at those rows. */
+const BEHIND = -2.4, INFRONT = 2.4;
+
+function overlayDoc(hunk) {
+  const lines = hunk.lines;
+  const place = (line, key, row, z, dim) => ({
+    key, kind: line.kind, indent: indentOf(line.text), body: bodyOf(line.text),
+    caret: null, number: line.kind === "del" ? line.oldNo : line.newNo, row, z, dim,
+  });
+
+  const out = [];
+  let row = 0;
+  let at = 0;
+  while (at < lines.length) {
+    const kind = lines[at].kind;
+    let stop = at;
+    while (stop < lines.length && lines[stop].kind === kind) stop += 1;
+
+    if (kind === "ctx") {
+      for (let k = at; k < stop; k += 1) out.push(place(lines[k], k, row + (k - at), 0, 0.5));
+      row += stop - at;
+      at = stop;
+      continue;
+    }
+
+    // a removal run and the addition run right after it are one replacement
+    let addFrom = -1;
+    let addTo = stop;
+    if (kind === "del") {
+      while (addTo < lines.length && lines[addTo].kind === "add") addTo += 1;
+      if (addTo > stop) addFrom = stop;
+    }
+    const gone = kind === "del" ? stop - at : 0;
+    const fresh = kind === "add" ? stop - at : addFrom === -1 ? 0 : addTo - addFrom;
+    const freshFrom = kind === "add" ? at : addFrom;
+
+    for (let k = 0; k < gone; k += 1) out.push(place(lines[at + k], at + k, row + k, BEHIND, 0.9));
+    for (let k = 0; k < fresh; k += 1) out.push(place(lines[freshFrom + k], freshFrom + k, row + k, INFRONT, 1));
+    row += Math.max(gone, fresh, 1);
+    at = addTo;
+  }
+  return out;
 }
 
 /* ---------- the live page: one keyed group per visible line ---------- */
@@ -447,16 +510,28 @@ function drop(held) {
   });
 }
 
+function setOpacity(held, value) {
+  held.group.traverse((child) => {
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    materials.forEach((material) => {
+      if (!material) return;
+      material.opacity = value;
+      material.transparent = true;
+    });
+  });
+}
+
 function syncPage(doc, language, typing, live_caret) {
   const seen = new Set();
-  doc.forEach((entry, row) => {
+  doc.forEach((entry, index) => {
     seen.add(entry.key);
     const held = live.get(entry.key) || makeLine(entry, language);
     live.set(entry.key, held);
     refreshCode(held, entry, language);
-    const target = -row * ROW;
+    const target = -(entry.row === undefined ? index : entry.row) * ROW;
     held.y = held.y === null ? target : held.y + (target - held.y) * 0.28;
-    held.group.position.y = held.y;
+    held.group.position.set(0, held.y, entry.z || 0);
+    setOpacity(held, entry.dim === undefined ? 1 : entry.dim);
     if (entry.caret !== null) {
       caret.position.set((entry.indent + entry.caret) * CH + CH * 0.1, held.y, THICK);
     }
@@ -473,6 +548,9 @@ function syncPage(doc, language, typing, live_caret) {
 }
 
 /* ---------- transport ---------- */
+const CONTEXTS = [0, 3, 8, 20, 60];
+let sceneContext = 3;   // what the scene we hold actually carries
+let shownContext = null; // null: show all of it
 const RATES = [0.25, 0.5, 0.7, 1, 2.5, 6];
 const NORMAL = RATES.indexOf(1);
 let data = null;
@@ -517,6 +595,27 @@ const ACTIONS = {
   zoomIn: () => nudgeZoom(1 / 1.18),
   zoomOut: () => nudgeZoom(1.18),
   fit: refit,
+  overlay: () => {
+    overlay = !overlay;
+    if (overlay) {
+      setSpeed(0);
+      hush();
+    }
+    button("overlay").classList.toggle("live", overlay);
+    button("overlay").textContent = overlay ? "typing" : "overlay";
+    goto(at);
+  },
+  ctx: () => {
+    const at = CONTEXTS.indexOf(shownContext === null ? sceneContext : shownContext);
+    const want = CONTEXTS[(at + 1) % CONTEXTS.length];
+    if (want <= sceneContext) {
+      shownContext = want;
+      syncCtxBtn();
+      goto(at);
+    } else {
+      loadScene(want);
+    }
+  },
   full: () => {
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen().catch(() => {});
@@ -539,6 +638,12 @@ function setSpeed(value) {
   speed = value;
   button("toggle").textContent = speed > 0 ? "pause" : "play";
   button("toggle").classList.toggle("live", speed === 0);
+}
+
+function syncCtxBtn() {
+  const shown = shownContext === null ? sceneContext : shownContext;
+  button("ctx").textContent = "ctx " + shown;
+  button("ctx").classList.toggle("live", shown !== 3);
 }
 
 function syncFitBtn() {
@@ -606,6 +711,7 @@ function goto(index) {
   [...live.values()].forEach(drop);
   live.clear();
   refit();
+  if (overlay) follow = false;
   caretRow = 0;
   viewRow = 0;
   const widest = Math.max(...hunk.lines.map((line) => line.text.length), 24);
@@ -670,6 +776,8 @@ addEventListener("keydown", (e) => {
   else if (e.key === "=" || e.key === "+") ACTIONS.zoomIn();
   else if (e.key === "-" || e.key === "_") ACTIONS.zoomOut();
   else if (e.key === "0") ACTIONS.fit();
+  else if (e.key === "c") ACTIONS.ctx();
+  else if (e.key === "l") ACTIONS.overlay();
   else if (e.key === "j") scrollRows(3);
   else if (e.key === "k") scrollRows(-3);
   else if (e.key === "PageDown") { e.preventDefault(); scrollRows(WINDOW - 2); }
@@ -711,7 +819,8 @@ function frame(now) {
   clock = Math.min(timeline.total, Math.max(0, clock + dt * speed * RATES[rate]));
   if (auto && speed > 0 && clock >= timeline.total) goto(at + 1);
 
-  if (clock < heard) heard = clock;
+  if (overlay) heard = clock;
+  else if (clock < heard) heard = clock;
   else if (clock > heard) {
     timeline.strokes.forEach((stroke) => {
       if (stroke.at > heard && stroke.at <= clock) keyclick(stroke);
@@ -719,19 +828,22 @@ function frame(now) {
     heard = clock;
   }
 
-  const doc = documentAt(hunk, timeline, clock);
+  const doc = overlay ? overlayDoc(hunk) : documentAt(hunk, timeline, clock);
   syncPage(doc, data.files[hunk.file].language, speed > 0,
-    clock > 0 && clock < timeline.total);
+    !overlay && clock > 0 && clock < timeline.total);
 
   const active = doc.findIndex((entry) => entry.caret !== null);
   if (active !== -1) caretRow = active;
 
-  const rows = Math.min(doc.length, WINDOW);
+  const spread = overlay
+    ? doc.reduce((deepest, entry) => Math.max(deepest, entry.row + 1), 0)
+    : doc.length;
+  const rows = Math.min(spread, WINDOW);
   const edge = (rows - 1) / 2;
-  const lowest = Math.max(edge, doc.length - 1 - edge);
+  const lowest = Math.max(edge, spread - 1 - edge);
   const anchor = Math.min(Math.max(caretRow, edge), lowest);
   if (follow) viewRow += (anchor - viewRow) * 0.12;
-  else viewRow = Math.min(Math.max(viewRow, 0), Math.max(0, doc.length - 1));
+  else viewRow = Math.min(Math.max(viewRow, 0), Math.max(0, spread - 1));
 
   const fit = Math.max(framing.width * 0.98, rows * ROW * 1.34) + 6;
   goal.target.set(framing.centre + panX, -viewRow * ROW, 0);
@@ -753,25 +865,57 @@ function frame(now) {
 /* the scene comes from this server by default; a host page can point elsewhere */
 const SCENE = new URLSearchParams(location.search).get("scene") || "scene.json";
 
-fetch(SCENE).then((r) => r.json()).then((loaded) => {
-  data = loaded;
+const sceneURL = (context) => {
+  if (context === null) return SCENE;
+  return SCENE + (SCENE.includes("?") ? "&" : "?") + "context=" + context;
+};
+
+function describeScene() {
   const capped = data.totals.shown < data.totals.hunks
     ? "first " + data.totals.shown + " of " + data.totals.hunks + " hunks"
     : data.totals.hunks + " hunks";
   document.getElementById("label").innerHTML =
     data.meta.label + " &middot; " + capped +
     (data.meta.order === "story" ? " &middot; <span class='sym'>story order</span>" : "") +
+    (data.meta.narrationError
+      ? " &middot; <span class='del'>no narration: " + data.meta.narrationError + "</span>"
+      : "") +
     " &middot; " +
     "<span class='add'>+" + data.totals.additions + "</span> " +
     "<span class='del'>-" + data.totals.deletions + "</span>";
-  buildStrip();
-  syncFitBtn();
-  syncVoiceBtn();
-  setRate(NORMAL);
-  setSpeed(1);
-  goto(0);
-  requestAnimationFrame(frame);
-});
+}
+
+/* Widening the context means a new diff, so the scene is refetched. Hunks can
+   merge at wider settings, so we land on the nearest surviving hunk. */
+function loadScene(context) {
+  const wanted = context === null ? null : context;
+  const first = data === null;
+  const at0 = first ? 0 : at;
+  return fetch(sceneURL(wanted))
+    .then((r) => r.json())
+    .then((loaded) => {
+      data = loaded;
+      sceneContext = data.meta.context === undefined ? 3 : data.meta.context;
+      shownContext = wanted !== null && wanted > sceneContext ? null : wanted;
+      describeScene();
+      strip.innerHTML = "";
+      buildStrip();
+      syncFitBtn();
+      syncVoiceBtn();
+      syncCtxBtn();
+      if (first) {
+        setRate(NORMAL);
+        setSpeed(1);
+      }
+      goto(Math.min(at0, data.hunks.length - 1));
+      if (first) requestAnimationFrame(frame);
+    })
+    .catch((err) => {
+      document.getElementById("label").textContent = "cannot load the scene: " + err;
+    });
+}
+
+loadScene(null);
 </script>
 </body>
 </html>
