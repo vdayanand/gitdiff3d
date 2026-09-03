@@ -33,16 +33,17 @@
     text-align:center; display:none; }
   #note .group { color:var(--accent); text-transform:uppercase; letter-spacing:.1em; font-size:11px; }
   #note .why { margin-top:4px; }
-  #bar { position:fixed; left:16px; right:16px; bottom:16px; height:40px; display:flex;
-    gap:8px; padding:6px; background:rgba(10,14,20,.8); border:1px solid var(--edge);
+  #bar { position:fixed; left:16px; right:16px; bottom:16px; min-height:40px; display:flex;
+    flex-wrap:wrap; align-items:center; gap:6px; padding:6px;
+    background:rgba(10,14,20,.8); border:1px solid var(--edge);
     border-radius:9px; backdrop-filter:blur(7px); }
-  #transport { display:flex; gap:4px; flex:0 0 auto; }
+  #transport { display:flex; flex-wrap:wrap; gap:4px; flex:0 1 auto; }
   #transport button { all:unset; cursor:pointer; padding:0 10px; border-radius:5px;
     color:var(--dim); background:#16202c; font:inherit; line-height:26px;
     transition:color .15s, background .15s; }
   #transport button:hover { color:var(--fg); background:#1e2c3c; }
   #transport button.live { color:#08101a; background:var(--accent); font-weight:600; }
-  #strip { display:flex; gap:3px; flex:1 1 auto; }
+  #strip { display:flex; gap:3px; flex:1 1 220px; min-height:26px; }
   #strip .seg { position:relative; flex:1 1 0; min-width:6px; border-radius:4px;
     background:#16202c; cursor:pointer; overflow:hidden; transition:background .15s; }
   #strip .seg:hover { background:#1e2c3c; }
@@ -370,18 +371,6 @@ function timelineOf(hunk) {
   return { edits, total, strokes, keystrokes, starts };
 }
 
-/* Context lines within `near` of a change. Narrowing is done here rather than by
-   refetching; widening past what the scene carries needs a new diff. */
-function nearChange(hunk, near) {
-  const changed = hunk.lines.map((line, at) => (line.kind === "ctx" ? -1 : at)).filter((at) => at >= 0);
-  const keep = new Set();
-  hunk.lines.forEach((line, at) => {
-    if (line.kind !== "ctx") return keep.add(at);
-    if (changed.some((change) => Math.abs(change - at) <= near)) keep.add(at);
-  });
-  return keep;
-}
-
 /* what the file looks like at time t: the layout falls out of hunk order */
 function documentAt(hunk, timeline, t) {
   const state = new Map();
@@ -402,9 +391,7 @@ function documentAt(hunk, timeline, t) {
   });
 
   const doc = [];
-  const near = shownContext === null ? null : nearChange(hunk, shownContext);
   hunk.lines.forEach((line, key) => {
-    if (near !== null && !near.has(key)) return;
     if (line.kind === "ctx") {
       doc.push({ key, kind: "ctx", indent: indentOf(line.text),
         body: bodyOf(line.text), caret: null, number: line.newNo });
@@ -549,8 +536,7 @@ function syncPage(doc, language, typing, live_caret) {
 
 /* ---------- transport ---------- */
 const CONTEXTS = [0, 3, 8, 20, 60];
-let sceneContext = 3;   // what the scene we hold actually carries
-let shownContext = null; // null: show all of it
+let sceneContext = 3; // lines of context the scene we hold was built with
 const RATES = [0.25, 0.5, 0.7, 1, 2.5, 6];
 const NORMAL = RATES.indexOf(1);
 let data = null;
@@ -606,15 +592,8 @@ const ACTIONS = {
     goto(at);
   },
   ctx: () => {
-    const at = CONTEXTS.indexOf(shownContext === null ? sceneContext : shownContext);
-    const want = CONTEXTS[(at + 1) % CONTEXTS.length];
-    if (want <= sceneContext) {
-      shownContext = want;
-      syncCtxBtn();
-      goto(at);
-    } else {
-      loadScene(want);
-    }
+    const step = CONTEXTS.indexOf(sceneContext);
+    loadScene(CONTEXTS[(step + 1) % CONTEXTS.length]);
   },
   full: () => {
     if (document.fullscreenElement) document.exitFullscreen();
@@ -641,9 +620,8 @@ function setSpeed(value) {
 }
 
 function syncCtxBtn() {
-  const shown = shownContext === null ? sceneContext : shownContext;
-  button("ctx").textContent = "ctx " + shown;
-  button("ctx").classList.toggle("live", shown !== 3);
+  button("ctx").textContent = "ctx " + sceneContext;
+  button("ctx").classList.toggle("live", sceneContext !== 3);
 }
 
 function syncFitBtn() {
@@ -896,7 +874,6 @@ function loadScene(context) {
     .then((loaded) => {
       data = loaded;
       sceneContext = data.meta.context === undefined ? 3 : data.meta.context;
-      shownContext = wanted !== null && wanted > sceneContext ? null : wanted;
       describeScene();
       strip.innerHTML = "";
       buildStrip();
