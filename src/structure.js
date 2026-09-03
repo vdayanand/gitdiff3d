@@ -119,4 +119,4 @@ const innermost = (symbols, line) =>
     .filter((s) => line >= s.start && line <= s.end)
     .reduce((best, s) => (best === null || s.depth > best.depth ? s : best), null);
 
-module.exports = { languageOf, analyze, innermost, indentOf };
+module.exports = { languageOf, analyze, innermost, indentOf, declarationAt };

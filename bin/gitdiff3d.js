@@ -3,6 +3,7 @@ const { execFile } = require("node:child_process");
 const { repoRoot, diffText, headLabel, newSideOf, sourceOf } = require("../src/git");
 const { parseDiff } = require("../src/parse-diff");
 const { buildScene } = require("../src/layout");
+const { orderHunks } = require("../src/order");
 const { serve } = require("../src/server");
 
 const USAGE = `usage: gitdiff3d [<revs>] [-- <path>...] [options]
@@ -15,16 +16,21 @@ const USAGE = `usage: gitdiff3d [<revs>] [-- <path>...] [options]
 
 options:
   --port <n>   listen on port n (default: random)
+  --max-hunks <n>  keep only the first n hunks (default: all)
+  --order <how>    story (definitions before their callers, schema before docs)
+                   or git (the order git prints them in). default: story
   --json       print the scene model, do not serve
   --no-open    serve without opening a browser
   -h, --help   this message`;
 
 function readArgs(argv) {
-  const flags = { port: 0, json: false, open: true };
+  const flags = { port: 0, json: false, open: true, maxHunks: 0, order: "story" };
   const revisions = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--port") flags.port = Number(argv[(i += 1)]);
+    else if (arg === "--max-hunks") flags.maxHunks = Number(argv[(i += 1)]);
+    else if (arg === "--order") flags.order = argv[(i += 1)];
     else if (arg === "--json") flags.json = true;
     else if (arg === "--no-open") flags.open = false;
     else if (arg === "-h" || arg === "--help") flags.help = true;
@@ -46,10 +52,11 @@ async function main() {
   const root = repoRoot(cwd);
   const diff = parseDiff(diffText(revisions, root));
   const newSide = newSideOf(revisions, root);
-  const sources = Object.fromEntries(
-    diff.files.map((file) => [file.path, sourceOf(newSide, file.path, root)]),
+  const readSource = (filePath) => sourceOf(newSide, filePath, root);
+  const scene = orderHunks(
+    buildScene(diff, { root, label: describe(revisions, root) }, readSource, flags.maxHunks),
+    flags.order,
   );
-  const scene = buildScene(diff, { root, label: describe(revisions, root) }, sources);
 
   if (flags.json) {
     console.log(JSON.stringify(scene, null, 2));
@@ -62,7 +69,8 @@ async function main() {
   }
   const port = await serve(scene, flags.port);
   const url = "http://127.0.0.1:" + port + "/";
-  console.log(scene.totals.files + " files, " + scene.totals.hunks + " hunks, +" +
+  console.log(scene.totals.files + " files, " + scene.totals.shown + " of " +
+    scene.totals.hunks + " hunks, +" +
     scene.totals.additions + " -" + scene.totals.deletions + "  ->  " + url);
   console.log("keys: space pause, , . keystroke, < > line, b rewind, arrows hunk, x/X speed, a autoplay");
   if (flags.open) execFile("open", [url]);

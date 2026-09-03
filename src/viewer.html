@@ -20,8 +20,19 @@
   #where { top:16px; left:50%; transform:translateX(-50%); text-align:center; white-space:nowrap; }
   #where .sym { color:var(--accent); }
   #where .meta { color:var(--dim); margin-top:3px; }
-  #keys { bottom:74px; left:16px; color:var(--dim); animation-delay:.1s; }
+  #keys { top:92px; left:16px; max-width:min(620px,54vw); color:var(--dim);
+    animation-delay:.1s; }
+  #keysHead { cursor:pointer; user-select:none; letter-spacing:.1em; text-transform:uppercase;
+    font-size:11px; }
+  #keysHead:hover { color:var(--fg); }
+  #keysCaret { color:var(--accent); display:inline-block; width:11px; }
+  #keysBody { margin-top:7px; }
+  #keys.shut #keysBody { display:none; }
   #keys b { color:var(--fg); font-weight:600; }
+  #note { left:50%; bottom:74px; transform:translateX(-50%); max-width:min(760px,64vw);
+    text-align:center; display:none; }
+  #note .group { color:var(--accent); text-transform:uppercase; letter-spacing:.1em; font-size:11px; }
+  #note .why { margin-top:4px; }
   #bar { position:fixed; left:16px; right:16px; bottom:16px; height:40px; display:flex;
     gap:8px; padding:6px; background:rgba(10,14,20,.8); border:1px solid var(--edge);
     border-radius:9px; backdrop-filter:blur(7px); }
@@ -48,12 +59,19 @@
 <div class="panel" id="brand"><h1>gitdiff3d</h1><div id="label">loading...</div></div>
 <div class="panel" id="where"><div class="path"></div><div class="meta"></div></div>
 <div class="panel" id="keys">
+  <div id="keysHead"><span id="keysCaret">-</span>shortcuts</div>
+  <div id="keysBody">
   <b>space</b> pause &middot; <b>,</b>/<b>.</b> keystroke &middot; <b>&lt;</b>/<b>&gt;</b> whole line &middot;
   <b>b</b>/<b>r</b> rewind &middot;
-  <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>m</b> sound &middot; <b>a</b> autoplay<br>
+  <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>m</b> sound &middot; <b>v</b> voice &middot; <b>f</b> full &middot; <b>a</b> autoplay<br>
+  <b>wheel</b> or <b>j</b>/<b>k</b> scroll &middot; <b>ctrl-wheel</b> or <b>+</b>/<b>&minus;</b> zoom &middot;
+  <b>shift-wheel</b> sideways &middot; <b>0</b> refit and follow &middot;
+  <b>drag</b> orbit &middot; <b>?</b> hide this<br>
   every change is typed out: <span class="del">removals erase</span>,
   <span class="add">additions type in</span>
+  </div>
 </div>
+<div class="panel" id="note"><div class="group"></div><div class="why"></div></div>
 <div id="bar">
   <div id="transport">
     <button data-act="rewind">rewind</button>
@@ -62,6 +80,11 @@
     <button data-act="forward" title="one keystroke on, shift-click for a whole line">fwd</button>
     <button data-act="rate">1x</button>
     <button data-act="sound" title="typing sounds">sound</button>
+    <button data-act="voice" title="read the note aloud (v)">voice</button>
+    <button data-act="zoomIn" title="zoom in (=)">+</button>
+    <button data-act="zoomOut" title="zoom out (-)">&minus;</button>
+    <button data-act="fit" title="back to fit (0)">fit</button>
+    <button data-act="full" title="fill the screen (f)">full</button>
   </div>
   <div id="strip"></div>
 </div>
@@ -252,18 +275,64 @@ const orbit = { theta: Math.PI / 2 - 0.4, phi: Math.PI / 2 - 0.15, radius: 26,
   target: new THREE.Vector3() };
 const goal = { radius: 26, target: new THREE.Vector3() };
 
+/* The camera keeps a readable window rather than fitting the whole hunk, and
+   follows the caret through it. Scrolling detaches the follow, like a log tail;
+   fit re-attaches. Zoom scales the window, pan slides it sideways. */
+const ZOOM = { min: 0.12, max: 6 };
+const WINDOW = 22;
+let zoom = 1;
+let panX = 0;
+let follow = true;
+let viewRow = 0;
+let caretRow = 0;
+
+const nudgeZoom = (factor) => {
+  zoom = Math.min(ZOOM.max, Math.max(ZOOM.min, zoom * factor));
+  syncFitBtn();
+};
+
+function scrollRows(rows) {
+  follow = false;
+  viewRow += rows;
+  syncFitBtn();
+}
+
+function refit() {
+  zoom = 1;
+  panX = 0;
+  follow = true;
+  syncFitBtn();
+}
+
 let drag = null;
-renderer.domElement.addEventListener("pointerdown", (e) => (drag = { x: e.clientX, y: e.clientY }));
+renderer.domElement.addEventListener("pointerdown",
+  (e) => (drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button === 1 }));
 addEventListener("pointerup", () => (drag = null));
 addEventListener("pointermove", (e) => {
   if (!drag) return;
-  orbit.theta -= (e.clientX - drag.x) * 0.005;
-  orbit.phi = Math.min(Math.PI - 0.12, Math.max(0.12, orbit.phi - (e.clientY - drag.y) * 0.005));
-  drag = { x: e.clientX, y: e.clientY };
+  const dx = e.clientX - drag.x;
+  const dy = e.clientY - drag.y;
+  if (drag.pan) {
+    panX -= dx * orbit.radius * 0.0016;
+    scrollRows((dy * orbit.radius * 0.0016) / ROW);
+  } else {
+    orbit.theta -= dx * 0.005;
+    orbit.phi = Math.min(Math.PI - 0.12, Math.max(0.12, orbit.phi - dy * 0.005));
+  }
+  drag = { x: e.clientX, y: e.clientY, pan: drag.pan };
 });
+/* wheel scrolls the page, as it would in an editor; ctrl or cmd zooms */
 addEventListener("wheel", (e) => {
-  goal.radius = Math.min(300, Math.max(4, goal.radius * (1 + Math.sign(e.deltaY) * 0.09)));
-}, { passive: true });
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    nudgeZoom(1 + Math.sign(e.deltaY) * 0.09);
+  } else if (e.shiftKey) {
+    panX += e.deltaY * CH * 0.6;
+    syncFitBtn();
+  } else {
+    scrollRows((e.deltaY / 100) * 2.2);
+  }
+}, { passive: false });
 
 /* ---------- the edit timeline: one entry per changed line ---------- */
 const TYPE_MS = 16, ERASE_MS = 7, THINK_MS = 190, SETTLE_MS = 150, TAIL_MS = 900;
@@ -432,10 +501,26 @@ const seek = (direction, coarse) => {
 
 const ACTIONS = {
   rewind: () => { clock = 0; },
-  toggle: () => setSpeed(speed > 0 ? 0 : 1),
+  toggle: () => {
+    if (speed > 0) hush();
+    setSpeed(speed > 0 ? 0 : 1);
+  },
+  voice: () => {
+    voiceOn = !voiceOn;
+    if (!voiceOn) hush();
+    else tellNote();
+    syncVoiceBtn();
+  },
   back: (coarse) => seek(-1, coarse),
   forward: (coarse) => seek(1, coarse),
   rate: (step) => setRate(rate + (step || 1)),
+  zoomIn: () => nudgeZoom(1 / 1.18),
+  zoomOut: () => nudgeZoom(1.18),
+  fit: refit,
+  full: () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+  },
   sound: () => {
     sfx.on = !sfx.on;
     wake();
@@ -456,9 +541,60 @@ function setSpeed(value) {
   button("toggle").classList.toggle("live", speed === 0);
 }
 
+function syncFitBtn() {
+  const off = Math.abs(zoom - 1) > 0.02 || Math.abs(panX) > 0.02 || !follow;
+  button("fit").textContent = !follow ? "follow" : off ? (1 / zoom).toFixed(1) + "x" : "fit";
+  button("fit").classList.toggle("live", off);
+  button("fit").title = follow ? "back to fit (0)" : "resume following the caret (0)";
+}
+
+function syncFullBtn() {
+  const wide = document.fullscreenElement !== null;
+  button("full").textContent = wide ? "exit" : "full";
+  button("full").classList.toggle("live", wide);
+}
+addEventListener("fullscreenchange", syncFullBtn);
+
 transport.querySelectorAll("button").forEach((element) => {
   element.onclick = (e) => { ACTIONS[element.dataset.act](e.shiftKey); e.currentTarget.blur(); };
 });
+
+/* ---------- narration ----------
+   A scene may arrive with a note per hunk (why the change exists) and a group
+   label. gitdiff3d never writes these; a host such as gtweb fills them in. */
+const VOICE_KEY = "gitdiff3d-voice";
+let voiceOn = true;
+try { voiceOn = localStorage.getItem(VOICE_KEY) !== "0"; } catch (e) {}
+
+const canSpeak = () => typeof speechSynthesis !== "undefined";
+const hush = () => { if (canSpeak()) speechSynthesis.cancel(); };
+
+function say(text) {
+  if (!voiceOn || !text || !canSpeak()) return;
+  speechSynthesis.cancel();
+  const line = new SpeechSynthesisUtterance(text);
+  line.rate = 1.06;
+  speechSynthesis.speak(line);
+}
+
+function syncVoiceBtn() {
+  button("voice").textContent = voiceOn ? "voice" : "silent";
+  button("voice").classList.toggle("live", !voiceOn);
+  try { localStorage.setItem(VOICE_KEY, voiceOn ? "1" : "0"); } catch (e) {}
+}
+
+function tellNote() {
+  const panel = document.getElementById("note");
+  if (!hunk.note && !hunk.group) {
+    panel.style.display = "none";
+    hush();
+    return;
+  }
+  panel.querySelector(".group").textContent = hunk.group || "";
+  panel.querySelector(".why").textContent = hunk.note || "";
+  panel.style.display = "block";
+  say([hunk.group, hunk.note].filter(Boolean).join(". "));
+}
 
 /* ---------- hunks ---------- */
 function goto(index) {
@@ -469,6 +605,9 @@ function goto(index) {
   setSpeed(speed > 0 ? 1 : 0);
   [...live.values()].forEach(drop);
   live.clear();
+  refit();
+  caretRow = 0;
+  viewRow = 0;
   const widest = Math.max(...hunk.lines.map((line) => line.text.length), 24);
   framing = { width: widest * CH, centre: (widest * CH) / 2 - GUTTER * CH };
   describe();
@@ -478,8 +617,9 @@ function describe() {
   const file = data.files[hunk.file];
   document.querySelector("#where .path").innerHTML =
     file.path + (hunk.symbol ? " <span class='sym'>" + hunk.symbol + "</span>" : "");
+  tellNote();
   document.querySelector("#where .meta").innerHTML =
-    "hunk " + hunk.index + " / " + data.totals.hunks +
+    "hunk " + hunk.index + " / " + data.hunks.length +
     " &middot; line " + hunk.newStart +
     " &middot; <span class='add'>+" + hunk.additions + "</span>" +
     " <span class='del'>-" + hunk.deletions + "</span>" +
@@ -517,19 +657,52 @@ addEventListener("resize", resize);
 resize();
 
 addEventListener("keydown", (e) => {
-  if (e.key === " ") { e.preventDefault(); ACTIONS.toggle(); }
+  if (e.key === "?" || e.key === "h") {
+    keysPane.classList.toggle("shut");
+    syncKeysPane();
+  }
+  else if (e.key === " ") { e.preventDefault(); ACTIONS.toggle(); }
   else if (e.key === ",") ACTIONS.back(false);
   else if (e.key === ".") ACTIONS.forward(false);
   else if (e.key === "<") ACTIONS.back(true);
   else if (e.key === ">") ACTIONS.forward(true);
   else if (e.key === "b" || e.key === "r") ACTIONS.rewind();
+  else if (e.key === "=" || e.key === "+") ACTIONS.zoomIn();
+  else if (e.key === "-" || e.key === "_") ACTIONS.zoomOut();
+  else if (e.key === "0") ACTIONS.fit();
+  else if (e.key === "j") scrollRows(3);
+  else if (e.key === "k") scrollRows(-3);
+  else if (e.key === "PageDown") { e.preventDefault(); scrollRows(WINDOW - 2); }
+  else if (e.key === "PageUp") { e.preventDefault(); scrollRows(-(WINDOW - 2)); }
+  else if (e.key === "f") ACTIONS.full();
   else if (e.key === "m") ACTIONS.sound();
+  else if (e.key === "v") ACTIONS.voice();
   else if (e.key === "x") ACTIONS.rate(1);
   else if (e.key === "X") ACTIONS.rate(-1);
   else if (e.key === "ArrowRight" || e.key === "n") goto(at + 1);
   else if (e.key === "ArrowLeft" || e.key === "p") goto(at - 1);
   else if (e.key === "a") { auto = !auto; describe(); }
 });
+
+/* the shortcut pane folds away; the choice sticks per browser */
+const keysPane = document.getElementById("keys");
+const KEYS_SHUT = "gitdiff3d-keys-shut";
+
+function syncKeysPane() {
+  const shut = keysPane.classList.contains("shut");
+  document.getElementById("keysCaret").textContent = shut ? "+" : "-";
+  try { localStorage.setItem(KEYS_SHUT, shut ? "1" : "0"); } catch (e) {}
+}
+
+let keysChoice = null;
+try { keysChoice = localStorage.getItem(KEYS_SHUT); } catch (e) {}
+const cramped = innerWidth < 900 || innerHeight < 640;
+if (keysChoice === "1" || (keysChoice === null && cramped)) keysPane.classList.add("shut");
+document.getElementById("keysHead").onclick = () => {
+  keysPane.classList.toggle("shut");
+  syncKeysPane();
+};
+syncKeysPane();
 
 let last = performance.now();
 function frame(now) {
@@ -550,9 +723,19 @@ function frame(now) {
   syncPage(doc, data.files[hunk.file].language, speed > 0,
     clock > 0 && clock < timeline.total);
 
-  const height = doc.length * ROW;
-  goal.target.set(framing.centre, -height / 2 + ROW / 2, 0);
-  goal.radius = Math.max(framing.width * 0.98, height * 1.34) + 6;
+  const active = doc.findIndex((entry) => entry.caret !== null);
+  if (active !== -1) caretRow = active;
+
+  const rows = Math.min(doc.length, WINDOW);
+  const edge = (rows - 1) / 2;
+  const lowest = Math.max(edge, doc.length - 1 - edge);
+  const anchor = Math.min(Math.max(caretRow, edge), lowest);
+  if (follow) viewRow += (anchor - viewRow) * 0.12;
+  else viewRow = Math.min(Math.max(viewRow, 0), Math.max(0, doc.length - 1));
+
+  const fit = Math.max(framing.width * 0.98, rows * ROW * 1.34) + 6;
+  goal.target.set(framing.centre + panX, -viewRow * ROW, 0);
+  goal.radius = fit * zoom;
   orbit.radius += (goal.radius - orbit.radius) * 0.08;
   orbit.target.lerp(goal.target, 0.1);
   camera.position.set(
@@ -567,13 +750,23 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-fetch("scene.json").then((r) => r.json()).then((loaded) => {
+/* the scene comes from this server by default; a host page can point elsewhere */
+const SCENE = new URLSearchParams(location.search).get("scene") || "scene.json";
+
+fetch(SCENE).then((r) => r.json()).then((loaded) => {
   data = loaded;
+  const capped = data.totals.shown < data.totals.hunks
+    ? "first " + data.totals.shown + " of " + data.totals.hunks + " hunks"
+    : data.totals.hunks + " hunks";
   document.getElementById("label").innerHTML =
-    data.meta.label + " &middot; " + data.totals.hunks + " hunks &middot; " +
+    data.meta.label + " &middot; " + capped +
+    (data.meta.order === "story" ? " &middot; <span class='sym'>story order</span>" : "") +
+    " &middot; " +
     "<span class='add'>+" + data.totals.additions + "</span> " +
     "<span class='del'>-" + data.totals.deletions + "</span>";
   buildStrip();
+  syncFitBtn();
+  syncVoiceBtn();
   setRate(NORMAL);
   setSpeed(1);
   goto(0);

@@ -53,20 +53,40 @@ const fileOf = (file, structure) => ({
   deletions: file.deletions,
 });
 
-function buildScene(diff, meta, sources) {
+// Which files the scene needs, given a hunk budget. Only these get their source
+// read, so a branch with thousands of changed files costs a handful of reads.
+const withinBudget = (files, maxHunks) => {
+  let left = maxHunks > 0 ? maxHunks : Infinity;
+  const chosen = [];
+  for (const file of files) {
+    if (left <= 0) break;
+    const take = Math.min(file.hunks.length, left);
+    left -= take;
+    if (take > 0) chosen.push({ file, take });
+  }
+  return chosen;
+};
+
+const sum = (files, field) => files.reduce((n, file) => n + file[field], 0);
+
+function buildScene(diff, meta, readSource, maxHunks) {
   const readable = diff.files.filter((file) => !file.binary);
-  const analysed = readable.map((file) => {
-    const structure = structureOf(file, sources[file.path]);
-    return { file: fileOf(file, structure), hunks: file.hunks.map(hunkOf(structure)) };
+  const analysed = withinBudget(readable, maxHunks).map(({ file, take }) => {
+    const structure = structureOf(file, readSource(file.path));
+    return {
+      file: fileOf(file, structure),
+      hunks: file.hunks.slice(0, take).map(hunkOf(structure)),
+    };
   });
   const hunks = analysed.flatMap(({ hunks: own }, file) => own.map((hunk) => ({ ...hunk, file })));
   return {
     meta,
     totals: {
-      files: analysed.length,
-      hunks: hunks.length,
-      additions: analysed.reduce((n, { file }) => n + file.additions, 0),
-      deletions: analysed.reduce((n, { file }) => n + file.deletions, 0),
+      files: readable.length,
+      hunks: readable.reduce((n, file) => n + file.hunks.length, 0),
+      shown: hunks.length,
+      additions: sum(readable, "additions"),
+      deletions: sum(readable, "deletions"),
     },
     files: analysed.map(({ file }) => file),
     hunks: hunks.map((hunk, index) => ({ ...hunk, index: index + 1 })),
