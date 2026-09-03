@@ -43,6 +43,8 @@
     transition:color .15s, background .15s; }
   #transport button:hover { color:var(--fg); background:#1e2c3c; }
   #transport button.live { color:#08101a; background:var(--accent); font-weight:600; }
+  #transport button:disabled { opacity:.35; cursor:default; }
+  #transport button:disabled:hover { color:var(--dim); background:#16202c; }
   #strip { display:flex; gap:3px; flex:1 1 220px; min-height:26px; }
   #strip .seg { position:relative; flex:1 1 0; min-width:6px; border-radius:4px;
     background:#16202c; cursor:pointer; overflow:hidden; transition:background .15s; }
@@ -66,7 +68,7 @@
   <b>b</b>/<b>r</b> rewind &middot;
   <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>m</b> sound &middot; <b>v</b> voice &middot; <b>f</b> full &middot; <b>a</b> autoplay<br>
   <b>wheel</b> or <b>j</b>/<b>k</b> scroll &middot; <b>ctrl-wheel</b> or <b>+</b>/<b>&minus;</b> zoom &middot;
-  <b>shift-wheel</b> sideways &middot; <b>0</b> refit and follow &middot; <b>c</b> context &middot; <b>l</b> overlay &middot;
+  <b>shift-wheel</b> sideways &middot; <b>0</b> refit and follow &middot; <b>c</b> context &middot; <b>l</b> overlay &middot; <b>g</b> front &middot;
   <b>drag</b> orbit &middot; <b>?</b> hide this<br>
   every change is typed out: <span class="del">removals erase</span>,
   <span class="add">additions type in</span>
@@ -85,6 +87,7 @@
     <button data-act="zoomIn" title="zoom in (=)">+</button>
     <button data-act="zoomOut" title="zoom out (-)">&minus;</button>
     <button data-act="overlay" title="both versions at once, removals behind (l)">overlay</button>
+    <button data-act="front" title="how solid the additions in front are (g)">front solid</button>
     <button data-act="ctx" title="lines of context around each change (c)">ctx 3</button>
     <button data-act="fit" title="back to fit (0)">fit</button>
     <button data-act="full" title="fill the screen (f)">full</button>
@@ -410,6 +413,15 @@ function documentAt(hunk, timeline, t) {
    another. A run with nothing opposite it leaves that plane empty at those rows. */
 const BEHIND = -2.4, INFRONT = 2.4;
 
+/* The additions sit in front. Fading or dropping them is how you read what they
+   replaced, so the plane behind brightens as the front gets out of the way. */
+const FRONTS = [
+  { name: "solid", front: 1, back: 0.9 },
+  { name: "ghost", front: 0.34, back: 1 },
+  { name: "off", front: 0, back: 1 },
+];
+let frontFace = 0;
+
 function overlayDoc(hunk) {
   const lines = hunk.lines;
   const place = (line, key, row, z, dim) => ({
@@ -443,8 +455,9 @@ function overlayDoc(hunk) {
     const fresh = kind === "add" ? stop - at : addFrom === -1 ? 0 : addTo - addFrom;
     const freshFrom = kind === "add" ? at : addFrom;
 
-    for (let k = 0; k < gone; k += 1) out.push(place(lines[at + k], at + k, row + k, BEHIND, 0.9));
-    for (let k = 0; k < fresh; k += 1) out.push(place(lines[freshFrom + k], freshFrom + k, row + k, INFRONT, 1));
+    const shade = FRONTS[frontFace];
+    for (let k = 0; k < gone; k += 1) out.push(place(lines[at + k], at + k, row + k, BEHIND, shade.back));
+    for (let k = 0; k < fresh; k += 1) out.push(place(lines[freshFrom + k], freshFrom + k, row + k, INFRONT, shade.front));
     row += Math.max(gone, fresh, 1);
     at = addTo;
   }
@@ -498,6 +511,7 @@ function drop(held) {
 }
 
 function setOpacity(held, value) {
+  held.group.visible = value > 0.02;
   held.group.traverse((child) => {
     const materials = Array.isArray(child.material) ? child.material : [child.material];
     materials.forEach((material) => {
@@ -589,7 +603,13 @@ const ACTIONS = {
     }
     button("overlay").classList.toggle("live", overlay);
     button("overlay").textContent = overlay ? "typing" : "overlay";
+    syncFrontBtn();
     goto(at);
+  },
+  front: () => {
+    if (!overlay) return;
+    frontFace = (frontFace + 1) % FRONTS.length;
+    syncFrontBtn();
   },
   ctx: () => {
     const step = CONTEXTS.indexOf(sceneContext);
@@ -617,6 +637,13 @@ function setSpeed(value) {
   speed = value;
   button("toggle").textContent = speed > 0 ? "pause" : "play";
   button("toggle").classList.toggle("live", speed === 0);
+}
+
+function syncFrontBtn() {
+  const shade = FRONTS[frontFace];
+  button("front").textContent = "front " + shade.name;
+  button("front").disabled = !overlay;
+  button("front").classList.toggle("live", overlay && frontFace !== 0);
 }
 
 function syncCtxBtn() {
@@ -756,6 +783,7 @@ addEventListener("keydown", (e) => {
   else if (e.key === "0") ACTIONS.fit();
   else if (e.key === "c") ACTIONS.ctx();
   else if (e.key === "l") ACTIONS.overlay();
+  else if (e.key === "g") ACTIONS.front();
   else if (e.key === "j") scrollRows(3);
   else if (e.key === "k") scrollRows(-3);
   else if (e.key === "PageDown") { e.preventDefault(); scrollRows(WINDOW - 2); }
@@ -880,6 +908,7 @@ function loadScene(context) {
       syncFitBtn();
       syncVoiceBtn();
       syncCtxBtn();
+      syncFrontBtn();
       if (first) {
         setRate(NORMAL);
         setSpeed(1);
