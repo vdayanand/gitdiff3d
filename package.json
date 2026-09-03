@@ -1,0 +1,11 @@
+{
+  "name": "gitdiff3d",
+  "version": "0.1.0",
+  "description": "git diff rendered as a 3d scene",
+  "bin": { "gitdiff3d": "./bin/gitdiff3d.js" },
+  "main": "src/index.js",
+  "type": "commonjs",
+  "engines": { "node": ">=18" },
+  "files": ["bin", "src"],
+  "license": "MIT"
+}

@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>gitdiff3d mockups</title>
+<style>
+  :root{--bg:#080b10;--fg:#cbd6e6;--dim:#5e6d86;--line:#1c2534;
+        --add:#3ddc84;--del:#ff5c6c;--ctx:#3a4a63;--accent:#7aa2ff;}
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);
+    font:13px/1.55 "SF Mono",Menlo,Consolas,monospace;}
+  canvas{display:block;}
+  .glass{position:fixed;background:rgba(10,14,20,.78);border:1px solid var(--line);
+    border-radius:10px;backdrop-filter:blur(8px);animation:rise .45s ease both;}
+  #brand{top:18px;left:18px;padding:12px 16px;}
+  #brand h1{margin:0;font-size:14px;letter-spacing:.18em;text-transform:uppercase;}
+  #brand p{margin:4px 0 0;color:var(--dim);}
+  #tabs{top:18px;left:50%;transform:translateX(-50%);padding:6px;display:flex;gap:4px;}
+  #tabs button{all:unset;cursor:pointer;padding:7px 13px;border-radius:7px;color:var(--dim);
+    font:inherit;transition:.18s;}
+  #tabs button:hover{color:var(--fg);background:#141c28;}
+  #tabs button.on{color:#08101a;background:var(--accent);font-weight:600;}
+  #tabs button b{font-weight:600;opacity:.55;margin-right:6px;}
+  #info{bottom:18px;left:18px;padding:14px 16px;max-width:340px;animation-delay:.08s;}
+  #info h2{margin:0 0 6px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);}
+  #info p{margin:0;color:#9fb0c8;}
+  #legend{bottom:18px;right:18px;padding:12px 16px;animation-delay:.14s;}
+  #legend div{display:flex;align-items:center;gap:9px;}
+  .sw{width:11px;height:11px;border-radius:3px;box-shadow:0 0 8px currentColor;}
+  #stats{top:18px;right:18px;padding:12px 16px;text-align:right;animation-delay:.05s;}
+  #stats b{font-weight:600;}
+  .add{color:var(--add);} .del{color:var(--del);} .dim{color:var(--dim);}
+  #hint{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);color:#3f4b60;}
+  @keyframes rise{from{opacity:0;transform:translateY(10px);}to{opacity:1;}}
+  #tabs{animation:rise .45s ease both;}
+</style>
+</head>
+<body>
+<div class="glass" id="brand"><h1>gitdiff3d</h1><p>git diff, one dimension richer</p></div>
+<div class="glass" id="tabs"></div>
+<div class="glass" id="stats">
+  <div><b>feat/payments</b> <span class="dim">vs main</span></div>
+  <div><span class="add">+418</span> <span class="del">-197</span> <span class="dim">/ 9 files</span></div>
+</div>
+<div class="glass" id="info"><h2 id="info-title"></h2><p id="info-body"></p></div>
+<div class="glass" id="legend">
+  <div style="color:var(--add)"><span class="sw" style="background:var(--add)"></span> added lines</div>
+  <div style="color:var(--del)"><span class="sw" style="background:var(--del)"></span> removed lines</div>
+  <div style="color:var(--ctx)"><span class="sw" style="background:var(--ctx)"></span> untouched context</div>
+  <div style="color:#6b7d94"><span class="sw" style="background:#6b7d94"></span> comment only</div>
+  <div style="color:#3c5578"><span class="sw" style="background:#3c5578"></span> function / type scope</div>
+</div>
+<div id="hint">drag to orbit &middot; wheel to zoom &middot; keys 1-5</div>
+
+<script src="three.min.js"></script>
+<script>
+/* ---------- fake repository ---------- */
+const rand = (() => { let s = 20260903; return () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648; })();
+const pick = (a) => a[Math.floor(rand() * a.length)];
+
+const FILES = [
+  { path: "src/payments/charge.ts", span: 340, add: 96, del: 41 },
+  { path: "src/payments/refund.ts", span: 210, add: 58, del: 12 },
+  { path: "src/api/routes.ts",      span: 160, add: 21, del: 33 },
+  { path: "src/db/schema.sql",      span: 95,  add: 44, del: 4  },
+  { path: "src/models/order.ts",    span: 280, add: 33, del: 52 },
+  { path: "test/charge.spec.ts",    span: 420, add: 118, del: 9 },
+  { path: "src/util/money.ts",      span: 70,  add: 19, del: 19 },
+  { path: "docs/payments.md",       span: 130, add: 24, del: 7  },
+  { path: "src/legacy/stripe.js",   span: 190, add: 5,  del: 20 },
+];
+
+const SOURCE = [
+  "export async function charge(order: Order, card: Card) {",
+  "  const idem = idempotencyKey(order.id, card.fingerprint);",
+  "  if (await ledger.seen(idem)) return ledger.replay(idem);",
+  "  const amount = Money.from(order.total, order.currency);",
+  "  assert(amount.isPositive(), \"charge must be positive\");",
+  "  const intent = await gateway.createIntent({ amount, card });",
+  "  return ledger.commit(idem, intent.id, amount);",
+  "}",
+  "",
+  "function idempotencyKey(orderId: string, print: string) {",
+  "  return sha256(`${orderId}:${print}`).slice(0, 32);",
+  "}",
+  "const RETRYABLE = new Set([\"rate_limited\", \"network\"]);",
+  "  logger.warn({ orderId: order.id }, \"retrying charge\");",
+  "  await sleep(backoff(attempt));",
+  "// retry only on transient gateway failures",
+  "// see docs/payments.md for the ledger contract",
+];
+
+const codeAt = (n, count) =>
+  Array.from({ length: count }, (_, i) => SOURCE[(n + i) % SOURCE.length]);
+
+FILES.forEach((f) => {
+  f.blocks = [];
+  let cursor = 4 + rand() * 20;
+  let budget = { add: f.add, del: f.del };
+  while (cursor < f.span - 4 && (budget.add > 0 || budget.del > 0)) {
+    const kind = budget.del > 0 && (rand() < 0.42 || budget.add <= 0) ? "del" : "add";
+    const length = Math.max(1, Math.min(budget[kind], Math.ceil(rand() * 14)));
+    budget[kind] -= length;
+    const line = Math.round(cursor);
+    f.blocks.push({ kind, line, length, text: codeAt(line, length) });
+    cursor += length + 4 + rand() * 26;
+  }
+});
+
+const NAMES = ["charge", "refund", "idempotencyKey", "Ledger", "Money", "createIntent",
+  "commit", "retryable", "backoff", "OrderState", "validate", "toCents", "settle"];
+
+FILES.forEach((f) => {
+  f.symbols = [];
+  let at = 6;
+  while (at < f.span - 14) {
+    const length = 34 + Math.round(rand() * 70);
+    const outer = { name: pick(NAMES), kind: rand() < 0.25 ? "type" : "function",
+      start: at, end: Math.min(f.span, at + length), depth: 0 };
+    f.symbols.push(outer);
+    if (outer.kind === "type" || rand() < 0.35) {
+      f.symbols.push({ name: pick(NAMES), kind: "method", depth: 1,
+        start: outer.start + 5, end: outer.start + 5 + Math.round(length * 0.45) });
+    }
+    at = outer.end + 10 + Math.round(rand() * 26);
+  }
+});
+
+const innermost = (symbols, line) =>
+  symbols
+    .filter((sym) => line >= sym.start && line <= sym.end)
+    .reduce((best, sym) => (best === null || sym.depth > best.depth ? sym : best), null);
+
+FILES.forEach((f) => {
+  f.blocks.forEach((b) => {
+    const owner = innermost(f.symbols, b.line);
+    b.symbol = owner ? owner.name : null;
+    b.depth = owner ? owner.depth + 1 : 0;
+    b.nature = b.text.every((line) => line.startsWith("//")) ? "comment" : "code";
+  });
+  f.touched = f.symbols.filter((sym) =>
+    f.blocks.some((b) => b.line >= sym.start && b.line <= sym.end));
+});
+
+const COMMITS = ["e1a4f0c", "7bd2911", "c0ffee2", "45ab3de", "9911fa0", "3c7d55b", "aa10e4f", "b7392cd"];
+
+/* ---------- stage ---------- */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x080b10, 0.0055);
+const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 800);
+scene.add(new THREE.HemisphereLight(0xa8c8ff, 0x0b1018, 0.95));
+const key = new THREE.DirectionalLight(0xffffff, 0.65);
+key.position.set(20, 40, 26);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x7aa2ff, 0.35);
+rim.position.set(-24, 10, -20);
+scene.add(rim);
+
+const orbit = { theta: 0.85, phi: 1.02, radius: 70, target: new THREE.Vector3(), spin: 0.00035 };
+const goal = { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius, target: new THREE.Vector3() };
+
+let drag = null;
+renderer.domElement.addEventListener("pointerdown", (e) => (drag = { x: e.clientX, y: e.clientY }));
+addEventListener("pointerup", () => (drag = null));
+addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  goal.theta -= (e.clientX - drag.x) * 0.006;
+  goal.phi = Math.min(Math.PI - 0.12, Math.max(0.12, goal.phi - (e.clientY - drag.y) * 0.006));
+  drag = { x: e.clientX, y: e.clientY };
+});
+addEventListener("wheel", (e) => {
+  goal.radius = Math.min(320, Math.max(10, goal.radius * (1 + Math.sign(e.deltaY) * 0.09)));
+}, { passive: true });
+
+/* ---------- helpers ---------- */
+const ADD = 0x3ddc84, DEL = 0xff5c6c, CTX = 0x3a4a63;
+
+const solid = (color, emissive) => new THREE.MeshStandardMaterial({
+  color, roughness: 0.42, metalness: 0.12, emissive: emissive === undefined ? 0x000000 : emissive });
+
+function box(w, h, d, color, glow) {
+  return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), solid(color, glow));
+}
+
+function text(str, color, height) {
+  const size = 30, pad = 10;
+  const probe = document.createElement("canvas").getContext("2d");
+  probe.font = size + "px Menlo, monospace";
+  const c = document.createElement("canvas");
+  c.width = Math.ceil(probe.measureText(str).width) + pad * 2;
+  c.height = size + pad * 2;
+  const g = c.getContext("2d");
+  g.font = size + "px Menlo, monospace";
+  g.fillStyle = color;
+  g.textBaseline = "middle";
+  g.fillText(str, pad, c.height / 2);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(c), transparent: true,
+    depthTest: false, depthWrite: false }));
+  const h = height || 1.1;
+  s.scale.set((c.width / c.height) * h, h, 1);
+  return s;
+}
+
+function ribbon(a, b, c, d, color, opacity) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(
+    [...a, ...b, ...c, ...a, ...c, ...d], 3));
+  g.computeVertexNormals();
+  return new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
+}
+
+function floorGrid(size, divisions, y) {
+  const grid = new THREE.GridHelper(size, divisions, 0x1a2331, 0x111823);
+  grid.position.y = y || 0;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.75;
+  return grid;
+}
+
+const PALETTE = { keyword:"#7aa2ff", string:"#e0af68", comment:"#566a86",
+  number:"#bb9af7", call:"#7dcfff", name:"#b6c5d9", punct:"#8091a8" };
+
+const KEYWORD = /^(?:const|let|var|function|return|if|else|for|while|class|interface|type|new|await|async|import|export|from|throw|try|catch|of|in|true|false|null|this)$/;
+
+const GRAMMAR = /(\s+)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\/\/.*)|(\b\d[\w.]*)|([A-Za-z_$][\w$]*)|([^\sA-Za-z0-9_$]+)/g;
+
+function tokenize(line) {
+  const out = [];
+  let m;
+  GRAMMAR.lastIndex = 0;
+  while ((m = GRAMMAR.exec(line)) !== null) {
+    const [text, space, str, comment, num, word] = m;
+    const colour = space ? PALETTE.name
+      : str ? PALETTE.string
+      : comment ? PALETTE.comment
+      : num ? PALETTE.number
+      : word ? (KEYWORD.test(word) ? PALETTE.keyword
+          : line[m.index + text.length] === "(" ? PALETTE.call : PALETTE.name)
+      : PALETTE.punct;
+    out.push({ text, colour });
+  }
+  return out;
+}
+
+const PLATE_PX = 900;
+
+function codePlate(block, faceRatio) {
+  const rows = Math.min(block.text.length, 40);
+  const c = document.createElement("canvas");
+  c.width = PLATE_PX;
+  c.height = Math.max(rows * 6, Math.round(PLATE_PX / faceRatio) || 1);
+  const g = c.getContext("2d");
+  g.fillStyle = "#0a1017";
+  g.fillRect(0, 0, c.width, c.height);
+  const size = (c.height / rows) * 0.72;
+  g.font = size + "px Menlo, monospace";
+  g.textBaseline = "middle";
+  const advance = g.measureText("0").width;
+  const room = Math.max(4, Math.floor((c.width - advance * 3) / advance));
+  block.text.slice(0, rows).forEach((line, i) => {
+    const y = ((i + 0.5) * c.height) / rows;
+    g.fillStyle = block.kind === "add" ? "#3ddc84" : "#ff5c6c";
+    g.fillText(block.kind === "add" ? "+" : "-", advance * 0.4, y);
+    let column = 0;
+    for (const token of tokenize(line)) {
+      const text = token.text.slice(0, room - column);
+      if (!text) break;
+      g.fillStyle = token.colour;
+      g.fillText(text, advance * 2 + column * advance, y);
+      column += text.length;
+    }
+  });
+  return new THREE.CanvasTexture(c);
+}
+
+const KIND_COLOUR = { type: "#7aa2ff", function: "#7dcfff", method: "#9ece6a" };
+
+function symbolBand(w, h, d) {
+  const geometry = new THREE.BoxGeometry(w, h, d);
+  const band = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    color: 0x2b3a55, transparent: true, opacity: 0.06, depthWrite: false }));
+  band.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry),
+    new THREE.LineBasicMaterial({ color: 0x3c5578, transparent: true, opacity: 0.5 })));
+  return band;
+}
+
+const plates = [];
+
+function plated(w, h, d, block) {
+  const up = block.kind === "add";
+  const plain = block.nature === "comment"
+    ? solid(0x6b7d94, 0x141c26)
+    : solid(up ? ADD : DEL, up ? 0x0e3c23 : 0x3c0e15);
+  const code = new THREE.MeshBasicMaterial({ map: codePlate(block, w / h) });
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+    [plain, plain, plain, plain, plain, plain]);
+  plates.push({ mesh, plain, code });
+  return mesh;
+}
+
+let platesOn = false;
+
+function showPlates(wanted) {
+  if (wanted === platesOn) return;
+  platesOn = wanted;
+  plates.forEach(({ mesh, plain, code }) => {
+    mesh.material[4] = wanted ? code : plain;
+  });
+}
+
+/* ---------- mockups ---------- */
+const MOCKUPS = [];
+
+/* 1. skyline: one tower per file, additions climb, deletions sink */
+MOCKUPS.push({
+  name: "Skyline",
+  title: "Mockup 1 - Diff skyline",
+  body: "Each file is a tower, y is the line number, and the front face of every block carries the syntax-coloured lines. The wire cages are the functions and types the changes landed in, named at their base; nesting pushes a block to the right. Grey blocks are comment-only churn.",
+  radius: 96, phi: 1.0, theta: 0.9, target: [0, 27, 0],
+  build(root, anim) {
+    const GAP = 3.4, LINE = 0.14, D = 1.7, WIDE = 2.6, STEP = 0.6;
+    const width = (FILES.length - 1) * GAP;
+    root.add(floorGrid(84, 28, 0));
+    FILES.forEach((f, i) => {
+      const x = i * GAP - width / 2;
+      const stem = box(0.05, f.span * LINE, 0.05, 0x1e2a3d);
+      stem.position.set(x, (f.span * LINE) / 2, 0);
+      root.add(stem);
+      const tick = box(WIDE + 0.2, 0.03, 0.03, 0x263449);
+      tick.position.set(x, f.span * LINE, 0);
+      root.add(tick);
+      f.touched.forEach((sym) => {
+        const h = (sym.end - sym.start + 1) * LINE;
+        const band = symbolBand(WIDE + 1.1 + sym.depth * STEP, h, D * 2.6);
+        band.position.set(x + (sym.depth * STEP) / 2, sym.start * LINE + h / 2, 0);
+        root.add(band);
+        const tag = text(sym.name, KIND_COLOUR[sym.kind], 0.44);
+        tag.position.set(x + sym.depth * STEP, sym.start * LINE - 0.3, D * 1.6);
+        root.add(tag);
+      });
+      f.blocks.forEach((b, j) => {
+        const h = Math.max(b.length * LINE, 0.08);
+        const up = b.kind === "add";
+        const m = plated(WIDE, h, D, b);
+        m.position.set(x + b.depth * STEP, b.line * LINE + h / 2,
+          up ? D / 2 + 0.08 : -D / 2 - 0.08);
+        m.scale.y = 0.001;
+        root.add(m);
+        anim.push({ mesh: m, delay: 260 + i * 70 + j * 22 });
+      });
+      const name = text(f.path.split("/").pop(), "#8ea3c0", 0.85);
+      name.position.set(x, i % 2 ? -2.6 : -1.3, -D * 1.9);
+      root.add(name);
+    });
+  },
+});
+
+/* 2. bridge: old file on the left wall, new file on the right, ribbons for survivors */
+MOCKUPS.push({
+  name: "Bridge",
+  title: "Mockup 2 - Old wall / new wall",
+  body: "The classic side-by-side, pulled apart in depth. Left wall is HEAD, right wall is your working tree. Grey ribbons connect lines that survived, and they twist where code moved. Red bars have no ribbon leaving; green bars have none arriving.",
+  radius: 38, phi: 1.1, theta: 0.42, target: [0, 8, 0],
+  build(root, anim) {
+    const LINE = 0.3, X = 6.5, W = 5.2;
+    const f = FILES[0];
+    const visible = 56;
+    const marks = [];
+    let oldRow = 0, newRow = 0;
+    for (let line = 0; line < visible; line += 1) {
+      const b = f.blocks.find((k) => line >= k.line && line < k.line + k.length);
+      const kind = b ? b.kind : "ctx";
+      marks.push({ kind, oldRow, newRow });
+      if (kind !== "add") oldRow += 1;
+      if (kind !== "del") newRow += 1;
+    }
+    [-X, X].forEach((x) => {
+      const wall = new THREE.Mesh(new THREE.PlaneGeometry(W + 1.2, visible * LINE),
+        new THREE.MeshBasicMaterial({ color: 0x0c121b, transparent: true, opacity: 0.35 }));
+      wall.position.set(x, (visible * LINE) / 2, 0);
+      wall.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2;
+      root.add(wall);
+    });
+    marks.forEach((m, i) => {
+      const jitter = 0.6 + rand() * 0.4;
+      if (m.kind !== "add") {
+        const bar = box(0.16, LINE * 0.7, W * jitter, m.kind === "del" ? DEL : CTX,
+          m.kind === "del" ? 0x3c0e15 : 0x0b1220);
+        bar.position.set(-X, m.oldRow * LINE + LINE / 2, 0);
+        root.add(bar);
+        anim.push({ mesh: bar, delay: 200 + i * 12, axis: "z" });
+      }
+      if (m.kind !== "del") {
+        const bar = box(0.16, LINE * 0.7, W * jitter, m.kind === "add" ? ADD : CTX,
+          m.kind === "add" ? 0x0e3c23 : 0x0b1220);
+        bar.position.set(X, m.newRow * LINE + LINE / 2, 0);
+        root.add(bar);
+        anim.push({ mesh: bar, delay: 200 + i * 12, axis: "z" });
+      }
+      if (m.kind === "ctx") {
+        const yo = m.oldRow * LINE + LINE / 2, yn = m.newRow * LINE + LINE / 2;
+        const z = (W * jitter) / 2;
+        root.add(ribbon(
+          [-X, yo - 0.05, -z], [X, yn - 0.05, -z], [X, yn + 0.05, z], [-X, yo + 0.05, z],
+          0x415777, 0.16));
+      }
+    });
+    const oldTag = text("HEAD", "#ff8a94", 1.1);
+    oldTag.position.set(-X, visible * LINE + 1, 0);
+    root.add(oldTag);
+    const newTag = text("working tree", "#7ff0b0", 1.1);
+    newTag.position.set(X, visible * LINE + 1, 0);
+    root.add(newTag);
+    const path = text(FILES[0].path, "#8ea3c0", 1);
+    path.position.set(0, visible * LINE + 2.4, 0);
+    root.add(path);
+  },
+});
+
+/* 3. terrain: churn as landscape over (file, line) */
+MOCKUPS.push({
+  name: "Terrain",
+  title: "Mockup 3 - Churn terrain",
+  body: "Forget lines, look at pressure. X is the file, Z is position in the file, height is how much churn sits there. Green peaks are growth, red basins are removal. You spot the epicentre of a refactor in one glance instead of scrolling nine hunks.",
+  radius: 78, phi: 0.86, target: [0, 3, 0],
+  build(root) {
+    const NX = FILES.length * 6, NZ = 60, SX = 54, SZ = 46;
+    const geo = new THREE.PlaneGeometry(SX, SZ, NX, NZ);
+    geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position;
+    const colors = [];
+    const field = (u, v) => {
+      const f = FILES[Math.min(FILES.length - 1, Math.floor(u * FILES.length))];
+      return f.blocks.reduce((acc, b) => {
+        const at = b.line / f.span;
+        const w = Math.exp(-Math.pow((v - at) / 0.045, 2)) * Math.log2(1 + b.length);
+        return acc + (b.kind === "add" ? w : -w);
+      }, 0);
+    };
+    for (let i = 0; i < pos.count; i += 1) {
+      const u = (pos.getX(i) + SX / 2) / SX;
+      const v = (pos.getZ(i) + SZ / 2) / SZ;
+      const h = field(u, v) * 1.35;
+      pos.setY(i, h);
+      const t = Math.max(-1, Math.min(1, h / 4));
+      const c = t > 0
+        ? new THREE.Color(0x14202a).lerp(new THREE.Color(ADD), t)
+        : new THREE.Color(0x14202a).lerp(new THREE.Color(DEL), -t);
+      colors.push(c.r, c.g, c.b);
+    }
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+    root.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.7, metalness: 0.05, flatShading: false })));
+    const wire = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+      color: 0x8fb4ff, wireframe: true, transparent: true, opacity: 0.12 }));
+    wire.position.y = 0.02;
+    root.add(wire);
+    root.add(floorGrid(SX * 1.3, 20, -6));
+    FILES.forEach((f, i) => {
+      const t = text(f.path.split("/").pop(), "#7d8ea8", 0.95);
+      t.position.set(-SX / 2 + ((i + 0.5) / FILES.length) * SX, -1.2, SZ / 2 + 2.6);
+      root.add(t);
+    });
+  },
+});
+
+/* 4. history: the third axis is time */
+MOCKUPS.push({
+  name: "History",
+  title: "Mockup 4 - Diff over time",
+  body: "The real reason for a third axis. X is the file, Z is the commit, Y is churn in that commit. A ridge running along Z is a file being hammered all week. An isolated spike is a one-off fix. This is a diff you cannot draw on paper.",
+  radius: 74, phi: 0.94, theta: 0.9, target: [0, 4, 0],
+  build(root, anim) {
+    const GX = 5.4, GZ = 5.0;
+    const wx = (FILES.length - 1) * GX, wz = (COMMITS.length - 1) * GZ;
+    root.add(floorGrid(Math.max(wx, wz) * 1.5, 22, 0));
+    FILES.forEach((f, i) => {
+      COMMITS.forEach((c, j) => {
+        const heat = Math.max(0, Math.sin(i * 1.7 + j * 0.9) * 0.5 + 0.5 - rand() * 0.35);
+        if (heat < 0.06) return;
+        const churn = heat * (f.add + f.del) * 0.09;
+        const ratio = f.add / (f.add + f.del);
+        const color = new THREE.Color(ratio > 0.5 ? ADD : DEL)
+          .offsetHSL(0, 0, (Math.abs(ratio - 0.5) - 0.25) * 0.14);
+        const m = box(2.6, churn, 2.4, color.getHex(), color.clone().multiplyScalar(0.42).getHex());
+        m.position.set(i * GX - wx / 2, churn / 2, j * GZ - wz / 2);
+        m.scale.y = 0.001;
+        root.add(m);
+        anim.push({ mesh: m, delay: 200 + j * 90 + i * 30 });
+      });
+      const t = text(f.path.split("/").pop(), "#7d8ea8", 0.9);
+      t.position.set(i * GX - wx / 2, -0.9, wz / 2 + 4.2);
+      root.add(t);
+    });
+    COMMITS.forEach((c, j) => {
+      const t = text(c, "#5e6d86", 0.85);
+      t.position.set(-wx / 2 - 5.5, -0.4, j * GZ - wz / 2);
+      root.add(t);
+    });
+  },
+});
+
+/* 5. stack: files as exploded slabs, hunks as patches */
+MOCKUPS.push({
+  name: "Stack",
+  title: "Mockup 5 - Exploded review stack",
+  body: "One slab per file, stacked in review order. Hunks glow on the slab where they sit in the file. Vertical threads link hunks that touch the same symbol, so a rename that ripples through four files reads as a single column of light.",
+  radius: 68, phi: 1.0, target: [0, 9, 0],
+  build(root, anim) {
+    const RISE = 3.4, LEN = 30, WID = 6.5;
+    FILES.forEach((f, i) => {
+      const y = i * RISE;
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(LEN, 0.12, WID),
+        new THREE.MeshStandardMaterial({ color: 0x121a26, roughness: 0.85,
+          transparent: true, opacity: 0.9 }));
+      slab.position.set(0, y, 0);
+      root.add(slab);
+      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(slab.geometry),
+        new THREE.LineBasicMaterial({ color: 0x2a3b52, transparent: true, opacity: 0.5 }));
+      edge.position.copy(slab.position);
+      root.add(edge);
+      f.blocks.forEach((b, j) => {
+        const w = Math.min(LEN * 0.28, Math.max(0.6, (b.length / f.span) * LEN * 2.4));
+        const up = b.kind === "add";
+        const patch = box(w, up ? 0.5 + b.length * 0.05 : 0.18, 2.6 + rand() * 2,
+          up ? ADD : DEL, up ? 0x0e3c23 : 0x3c0e15);
+        patch.position.set(-LEN / 2 + (b.line / f.span) * LEN, y + 0.35,
+          (rand() - 0.5) * (WID - 3.4));
+        patch.scale.set(0.001, 1, 1);
+        root.add(patch);
+        anim.push({ mesh: patch, delay: 220 + i * 90 + j * 30, axis: "x" });
+        if (i < FILES.length - 1 && rand() < 0.28) {
+          const thread = box(0.05, RISE, 0.05, 0x7aa2ff, 0x1b2c52);
+          thread.position.set(patch.position.x, y + RISE / 2, patch.position.z);
+          root.add(thread);
+        }
+      });
+      const t = text(f.path, "#8ea3c0", 0.9);
+      t.position.set(-LEN / 2 - 6.5, y + 0.4, 0);
+      root.add(t);
+    });
+  },
+});
+
+/* ---------- switching ---------- */
+const tabs = document.getElementById("tabs");
+let current = null;
+let anim = [];
+let clock = 0;
+
+function show(index) {
+  if (current) scene.remove(current.root);
+  plates.length = 0;
+  platesOn = false;
+  anim = [];
+  clock = 0;
+  const m = MOCKUPS[index];
+  const root = new THREE.Group();
+  m.build(root, anim);
+  scene.add(root);
+  current = { root, spec: m };
+  goal.radius = m.radius;
+  goal.phi = m.phi;
+  goal.theta = m.theta === undefined ? 0.85 : m.theta;
+  goal.target.set(...m.target);
+  document.getElementById("info-title").textContent = m.title;
+  document.getElementById("info-body").textContent = m.body;
+  [...tabs.children].forEach((b, i) => b.classList.toggle("on", i === index));
+}
+
+MOCKUPS.forEach((m, i) => {
+  const b = document.createElement("button");
+  b.innerHTML = "<b>" + (i + 1) + "</b>" + m.name;
+  b.onclick = () => show(i);
+  tabs.appendChild(b);
+});
+addEventListener("keydown", (e) => {
+  const n = Number(e.key);
+  if (n >= 1 && n <= MOCKUPS.length) show(n - 1);
+});
+
+function resize() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+addEventListener("resize", resize);
+resize();
+
+const ease = (k) => 1 - Math.pow(1 - k, 3);
+let last = performance.now();
+
+function frame(now) {
+  const dt = Math.min(48, now - last);
+  last = now;
+  clock += dt;
+
+  anim.forEach((a) => {
+    const k = Math.min(1, Math.max(0, (clock - a.delay) / 420));
+    a.mesh.scale[a.axis || "y"] = Math.max(0.001, ease(k));
+  });
+
+  showPlates(orbit.radius < 62);
+  if (!drag) goal.theta += orbit.spin * dt;
+  orbit.theta += (goal.theta - orbit.theta) * 0.12;
+  orbit.phi += (goal.phi - orbit.phi) * 0.12;
+  orbit.radius += (goal.radius - orbit.radius) * 0.08;
+  orbit.target.lerp(goal.target, 0.08);
+  camera.position.set(
+    orbit.target.x + orbit.radius * Math.sin(orbit.phi) * Math.cos(orbit.theta),
+    orbit.target.y + orbit.radius * Math.cos(orbit.phi),
+    orbit.target.z + orbit.radius * Math.sin(orbit.phi) * Math.sin(orbit.theta));
+  camera.lookAt(orbit.target);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+show(0);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

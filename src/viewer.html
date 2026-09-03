@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>gitdiff3d</title>
+<style>
+  :root { --bg:#080b11; --fg:#c9d4e2; --dim:#63718a; --add:#3ddc84; --del:#ff5c6c;
+          --edge:#1e2836; --accent:#7dcfff; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font:13px/1.5 "SF Mono",Menlo,Consolas,monospace; overflow:hidden; }
+  canvas { display:block; }
+  .panel { position:fixed; padding:11px 14px; background:rgba(10,14,20,.8);
+    border:1px solid var(--edge); border-radius:9px; backdrop-filter:blur(7px);
+    animation:rise .45s ease both; }
+  #brand { top:16px; left:16px; }
+  #brand h1 { margin:0; font-size:13px; letter-spacing:.16em; text-transform:uppercase; }
+  #brand div { color:var(--dim); margin-top:3px; }
+  #where { top:16px; left:50%; transform:translateX(-50%); text-align:center; white-space:nowrap; }
+  #where .path { color:var(--fg); }
+  #where .sym { color:var(--accent); }
+  #where .meta { color:var(--dim); margin-top:3px; }
+  #keys { bottom:74px; left:16px; color:var(--dim); animation-delay:.1s; }
+  #keys b { color:var(--fg); font-weight:600; }
+  #bar { position:fixed; left:16px; right:16px; bottom:16px; height:40px; display:flex;
+    gap:8px; padding:6px; background:rgba(10,14,20,.8); border:1px solid var(--edge);
+    border-radius:9px; backdrop-filter:blur(7px); }
+  #transport { display:flex; gap:4px; flex:0 0 auto; }
+  #transport button { all:unset; cursor:pointer; padding:0 11px; border-radius:5px;
+    color:var(--dim); background:#16202c; font:inherit; line-height:26px;
+    transition:color .15s, background .15s; }
+  #transport button:hover { color:var(--fg); background:#1e2c3c; }
+  #transport button.live { color:#08101a; background:var(--accent); font-weight:600; }
+  #strip { display:flex; gap:3px; flex:1 1 auto; }
+  #strip .seg { position:relative; flex:1 1 0; min-width:6px; border-radius:4px;
+    background:#16202c; cursor:pointer; overflow:hidden; transition:background .15s; }
+  #strip .seg:hover { background:#1e2c3c; }
+  #strip .seg.on { outline:1px solid var(--accent); }
+  #strip .seg .bar { position:absolute; inset:0; width:0; background:#24405c; }
+  #strip .seg i { position:absolute; inset:auto 0 0 0; height:3px; }
+  #strip .seg i.add { background:var(--add); } #strip .seg i.del { background:var(--del); }
+  .add { color:var(--add); } .del { color:var(--del); } .dim { color:var(--dim); }
+  @keyframes rise { from { opacity:0; transform:translateY(8px); } to { opacity:1; } }
+  #where { animation:rise .45s ease both; }
+</style>
+</head>
+<body>
+<div class="panel" id="brand"><h1>gitdiff3d</h1><div id="label">loading...</div></div>
+<div class="panel" id="where"><div class="path"></div><div class="meta"></div></div>
+<div class="panel" id="keys">
+  <b>space</b> pause &middot; <b>b</b> rewind &middot; <b>r</b> replay &middot;
+  <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>a</b> autoplay &middot; drag orbit<br>
+  <span class="del">removed lines</span> peel off into a faded pile below
+</div>
+<div id="bar">
+  <div id="transport">
+    <button data-act="rewind">rewind</button>
+    <button data-act="toggle">pause</button>
+    <button data-act="replay">replay</button>
+  </div>
+  <div id="strip"></div>
+</div>
+<script src="vendor/three.min.js"></script>
+<script>
+/* ---------- text metrics: world units are derived from the glyph advance ---------- */
+const FONT_PX = 32, CANVAS_H = 44, CH = 0.135, THICK = 0.07, GUTTER = 6;
+
+const probe = document.createElement("canvas").getContext("2d");
+probe.font = FONT_PX + "px Menlo, monospace";
+const ADVANCE = probe.measureText("0").width;
+const PLATE_H = (CH * CANVAS_H) / ADVANCE;
+const ROW = PLATE_H * 1.32;
+
+const PALETTE = { keyword:"#7aa2ff", string:"#e0af68", comment:"#566a86",
+  number:"#bb9af7", call:"#7dcfff", name:"#b8c6da", punct:"#8091a8" };
+
+const KEYWORD = /^(?:const|let|var|function|func|fn|def|class|struct|interface|type|enum|impl|trait|module|end|return|if|elif|else|elseif|for|while|do|then|switch|case|break|continue|new|delete|await|async|import|export|from|use|package|public|private|protected|static|throw|try|catch|finally|yield|lambda|match|where|with|as|in|of|not|and|or|is|null|nil|None|True|False|true|false|this|self|super|pub|mut)$/;
+
+const HASH_GRAMMAR = /(\s+)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(#.*|--.*)|(\b\d[\w.]*)|([A-Za-z_$][\w$]*)|([^\sA-Za-z0-9_$]+)/g;
+const SLASH_GRAMMAR = /(\s+)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\/\/.*|\/\*.*)|(\b\d[\w.]*)|([A-Za-z_$][\w$]*)|([^\sA-Za-z0-9_$]+)/g;
+
+function tokenize(line, language) {
+  const grammar = language === "c-like" ? SLASH_GRAMMAR : HASH_GRAMMAR;
+  const out = [];
+  grammar.lastIndex = 0;
+  let m;
+  while ((m = grammar.exec(line)) !== null) {
+    const [text, space, str, comment, num, word] = m;
+    out.push({ text, colour:
+      space ? PALETTE.name
+      : str ? PALETTE.string
+      : comment ? PALETTE.comment
+      : num ? PALETTE.number
+      : word ? (KEYWORD.test(word) ? PALETTE.keyword
+          : line[m.index + text.length] === "(" ? PALETTE.call : PALETTE.name)
+      : PALETTE.punct });
+  }
+  return out;
+}
+
+/* ---------- one plate per line, text baked into a canvas ---------- */
+const SKIN = {
+  ctx: { paper: "#0d131c", body: 0x18222f, ink: PALETTE.name },
+  del: { paper: "#1b1013", body: 0x7a2530, ink: "#ffb3ba" },
+  add: { paper: "#0c1a13", body: 0x1f6b46, ink: "#b9f4d2" },
+};
+
+function paint(width, draw) {
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(width * ADVANCE));
+  c.height = CANVAS_H;
+  const g = c.getContext("2d");
+  g.font = FONT_PX + "px Menlo, monospace";
+  g.textBaseline = "middle";
+  draw(g, c);
+  const texture = new THREE.CanvasTexture(c);
+  texture.anisotropy = 4;
+  return texture;
+}
+
+const codeTexture = (line, body, language) =>
+  paint(Math.max(body.length, 1), (g, c) => {
+    g.fillStyle = SKIN[line.kind].paper;
+    g.fillRect(0, 0, c.width, c.height);
+    let column = 0;
+    for (const token of tokenize(body, language)) {
+      g.fillStyle = token.colour;
+      g.fillText(token.text, column * ADVANCE, c.height / 2);
+      column += token.text.length;
+    }
+  });
+
+const gutterTexture = (line) =>
+  paint(GUTTER, (g, c) => {
+    const number = line.kind === "del" ? line.oldNo : line.newNo;
+    g.fillStyle = "#0a0f16";
+    g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = line.kind === "add" ? "#3ddc84" : line.kind === "del" ? "#ff5c6c" : "#2c3a4a";
+    g.fillText(line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ", 0, c.height / 2);
+    g.fillStyle = "#4b5b73";
+    g.fillText(String(number === null ? "" : number).padStart(4), 1.6 * ADVANCE, c.height / 2);
+  });
+
+function plate(chars, texture, body) {
+  const width = Math.max(0.4, chars * CH);
+  const geometry = new THREE.BoxGeometry(width, PLATE_H, THICK);
+  geometry.translate(width / 2, 0, 0);
+  const face = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+  const rim = new THREE.MeshBasicMaterial({ color: body, transparent: true });
+  const mesh = new THREE.Mesh(geometry, [rim, rim, rim, rim, face, rim]);
+  return { mesh, materials: [face, rim] };
+}
+
+/* ---------- stage ---------- */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 400);
+
+const orbit = { theta: Math.PI / 2 - 0.44, phi: Math.PI / 2 - 0.17, radius: 30,
+  target: new THREE.Vector3() };
+const goal = { radius: 30, target: new THREE.Vector3() };
+
+let drag = null;
+renderer.domElement.addEventListener("pointerdown", (e) => (drag = { x: e.clientX, y: e.clientY }));
+addEventListener("pointerup", () => (drag = null));
+addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  orbit.theta -= (e.clientX - drag.x) * 0.005;
+  orbit.phi = Math.min(Math.PI - 0.12, Math.max(0.12, orbit.phi - (e.clientY - drag.y) * 0.005));
+  drag = { x: e.clientX, y: e.clientY };
+});
+addEventListener("wheel", (e) => {
+  goal.radius = Math.min(300, Math.max(4, goal.radius * (1 + Math.sign(e.deltaY) * 0.09)));
+}, { passive: true });
+
+/* ---------- the walk ---------- */
+const RUN = 2100, HOLD = 1100, GHOST = 0.17, REWIND = -1.7;
+const clamp01 = (x) => Math.min(1, Math.max(0, x));
+const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+const lerp = (a, b, k) => a + (b - a) * k;
+
+let data = null;
+let at = 0;
+let clock = 0;
+let auto = false;
+let stage = null;
+let speed = 1;
+
+function rowsOf(lines) {
+  let old = 0;
+  let fresh = 0;
+  return lines.map((line) => {
+    const placed = { line, rowOld: old, rowNew: fresh };
+    if (line.kind !== "add") old += 1;
+    if (line.kind !== "del") fresh += 1;
+    return placed;
+  });
+}
+
+function buildHunk(hunk) {
+  const file = data.files[hunk.file];
+  const group = new THREE.Group();
+  const rows = rowsOf(hunk.lines);
+  const widest = Math.max(...hunk.lines.map((l) => l.text.length), 20);
+
+  let pile = 0;
+  const parts = rows.map(({ line, rowOld, rowNew }) => {
+    const indent = line.text.length - line.text.trimStart().length;
+    const body = line.text.slice(indent);
+    const skin = SKIN[line.kind];
+    const code = plate(body.length, codeTexture(line, body, file.language), skin.body);
+    const gutter = plate(GUTTER, gutterTexture(line), skin.body);
+    code.mesh.position.x = indent * CH;
+    gutter.mesh.position.x = -(GUTTER + 1.2) * CH;
+    const holder = new THREE.Group();
+    holder.add(code.mesh);
+    holder.add(gutter.mesh);
+    group.add(holder);
+    return { holder, kind: line.kind, rowOld, rowNew,
+      pile: line.kind === "del" ? pile++ : null,
+      materials: [...code.materials, ...gutter.materials] };
+  });
+
+  const rowsOld = rows.filter((r) => r.line.kind !== "add").length;
+  const rowsNew = rows.filter((r) => r.line.kind !== "del").length;
+  const width = widest * CH;
+
+  const sheet = new THREE.PlaneGeometry(width + (GUTTER + 3) * CH, 1);
+  sheet.translate(0, -0.5, 0);
+  const paper = new THREE.Mesh(sheet,
+    new THREE.MeshBasicMaterial({ color: 0x0a0f16, transparent: true, opacity: 0.55 }));
+  paper.position.set(width / 2 - (GUTTER * CH) / 2, ROW * 0.6, -THICK);
+  group.add(paper);
+
+  scene.add(group);
+  const removed = parts.filter((part) => part.kind === "del").length;
+  return { group, parts, paper, rowsOld, rowsNew, width, removed,
+    rowsRest: rowsNew + (removed ? removed + 1 : 0),
+    centre: width / 2 - GUTTER * CH };
+}
+
+function dispose(node) {
+  node.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    materials.forEach((material) => {
+      if (!material) return;
+      if (material.map) material.map.dispose();
+      material.dispose();
+    });
+  });
+}
+
+function goto(index) {
+  at = (index + data.hunks.length) % data.hunks.length;
+  clock = 0;
+  setSpeed(speed > 0 ? 1 : 0);
+  if (stage) {
+    scene.remove(stage.group);
+    dispose(stage.group);
+  }
+  stage = buildHunk(data.hunks[at]);
+  describe();
+}
+
+function describe() {
+  const hunk = data.hunks[at];
+  const file = data.files[hunk.file];
+  document.querySelector("#where .path").innerHTML =
+    "<span class='path'>" + file.path + "</span>" +
+    (hunk.symbol ? " <span class='sym'>" + hunk.symbol + "</span>" : "");
+  document.querySelector("#where .meta").innerHTML =
+    "hunk " + hunk.index + " / " + data.totals.hunks +
+    " &middot; line " + hunk.newStart +
+    " &middot; <span class='add'>+" + hunk.additions + "</span>" +
+    " <span class='del'>-" + hunk.deletions + "</span>" +
+    (hunk.comment ? " &middot; <span class='dim'>comment only</span>" : "") +
+    (auto ? " &middot; <span class='sym'>autoplay</span>" : "");
+  [...strip.children].forEach((seg, i) => seg.classList.toggle("on", i === at));
+}
+
+/* ---------- animation: one parameter, three behaviours ---------- */
+function animate() {
+  const p = clamp01(clock / RUN);
+  const out = ease(clamp01((p - 0.02) / 0.34));
+  const slide = ease(clamp01((p - 0.34) / 0.32));
+  const inn = ease(clamp01((p - 0.62) / 0.38));
+
+  const rows = lerp(stage.rowsOld, stage.rowsRest, slide);
+  const height = rows * ROW;
+  stage.paper.scale.y = lerp(stage.rowsOld, stage.rowsNew, slide) * ROW + ROW * 0.5;
+  goal.target.set(stage.centre, -height / 2 + ROW / 2, 0);
+  goal.radius = Math.max(stage.width * 0.98, height * 1.34) + 6;
+
+  stage.parts.forEach((part) => {
+    const { holder, kind } = part;
+    if (kind === "ctx") {
+      holder.position.set(0, -lerp(part.rowOld, part.rowNew, slide) * ROW, 0);
+      holder.rotation.x = 0;
+      setOpacity(part, 1);
+      return;
+    }
+    if (kind === "del") {
+      const rest = -(stage.rowsNew + 1.2 + part.pile) * ROW;
+      holder.position.set(0, lerp(-part.rowOld * ROW, rest, out), -out * 1.1);
+      holder.rotation.x = -out * 0.32;
+      setOpacity(part, lerp(1, GHOST, out));
+      return;
+    }
+    holder.position.set(0, -part.rowNew * ROW, (1 - inn) * 2.4);
+    holder.rotation.x = (1 - inn) * 1.5;
+    setOpacity(part, inn);
+  });
+}
+
+const setOpacity = (part, value) =>
+  part.materials.forEach((material) => {
+    material.opacity = value;
+    material.visible = value > 0.02;
+  });
+
+/* ---------- transport ---------- */
+const transport = document.getElementById("transport");
+
+const ACTIONS = {
+  rewind: () => setSpeed(speed < 0 ? 0 : REWIND),
+  toggle: () => setSpeed(speed > 0 ? 0 : 1),
+  replay: () => { clock = 0; setSpeed(1); },
+};
+
+function setSpeed(value) {
+  speed = value;
+  const toggle = transport.querySelector('[data-act="toggle"]');
+  toggle.textContent = speed > 0 ? "pause" : "play";
+  toggle.classList.toggle("live", speed === 0);
+  transport.querySelector('[data-act="rewind"]').classList.toggle("live", speed < 0);
+}
+
+transport.querySelectorAll("button").forEach((button) => {
+  button.onclick = (e) => {
+    ACTIONS[button.dataset.act]();
+    e.currentTarget.blur();
+  };
+});
+
+/* ---------- filmstrip ---------- */
+const strip = document.getElementById("strip");
+
+function buildStrip() {
+  data.hunks.forEach((hunk, i) => {
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    seg.title = data.files[hunk.file].path + "  +" + hunk.additions + " -" + hunk.deletions;
+    seg.style.flexGrow = String(Math.max(1, hunk.lines.length));
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const edge = document.createElement("i");
+    edge.className = hunk.additions >= hunk.deletions ? "add" : "del";
+    seg.append(bar, edge);
+    seg.onclick = () => goto(i);
+    strip.appendChild(seg);
+  });
+}
+
+function resize() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+addEventListener("resize", resize);
+resize();
+
+addEventListener("keydown", (e) => {
+  if (e.key === " ") { e.preventDefault(); ACTIONS.toggle(); }
+  else if (e.key === "ArrowRight" || e.key === "n") goto(at + 1);
+  else if (e.key === "ArrowLeft" || e.key === "p") goto(at - 1);
+  else if (e.key === "r") ACTIONS.replay();
+  else if (e.key === "b") ACTIONS.rewind();
+  else if (e.key === "a") { auto = !auto; describe(); }
+});
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(50, now - last);
+  last = now;
+  clock = Math.min(RUN + HOLD, Math.max(0, clock + dt * speed));
+  if (clock === 0 && speed < 0) setSpeed(0);
+  if (auto && speed > 0 && clock >= RUN + HOLD) goto(at + 1);
+
+  animate();
+  orbit.radius += (goal.radius - orbit.radius) * 0.08;
+  orbit.target.lerp(goal.target, 0.1);
+  camera.position.set(
+    orbit.target.x + orbit.radius * Math.sin(orbit.phi) * Math.cos(orbit.theta),
+    orbit.target.y + orbit.radius * Math.cos(orbit.phi),
+    orbit.target.z + orbit.radius * Math.sin(orbit.phi) * Math.sin(orbit.theta));
+  camera.lookAt(orbit.target);
+
+  const current = strip.children[at];
+  if (current) current.firstChild.style.width = clamp01(clock / RUN) * 100 + "%";
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+fetch("scene.json").then((r) => r.json()).then((loaded) => {
+  data = loaded;
+  document.getElementById("label").innerHTML =
+    data.meta.label + " &middot; " + data.totals.hunks + " hunks &middot; " +
+    "<span class='add'>+" + data.totals.additions + "</span> " +
+    "<span class='del'>-" + data.totals.deletions + "</span>";
+  buildStrip();
+  setSpeed(1);
+  goto(0);
+  requestAnimationFrame(frame);
+});
+</script>
+</body>
+</html>
