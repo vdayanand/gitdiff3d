@@ -50,7 +50,7 @@
 <div class="panel" id="keys">
   <b>space</b> pause &middot; <b>,</b>/<b>.</b> keystroke &middot; <b>&lt;</b>/<b>&gt;</b> whole line &middot;
   <b>b</b>/<b>r</b> rewind &middot;
-  <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>a</b> autoplay<br>
+  <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>m</b> sound &middot; <b>a</b> autoplay<br>
   every change is typed out: <span class="del">removals erase</span>,
   <span class="add">additions type in</span>
 </div>
@@ -61,6 +61,7 @@
     <button data-act="toggle">pause</button>
     <button data-act="forward" title="one keystroke on, shift-click for a whole line">fwd</button>
     <button data-act="rate">1x</button>
+    <button data-act="sound" title="typing sounds">sound</button>
   </div>
   <div id="strip"></div>
 </div>
@@ -152,6 +153,94 @@ function plate(chars, texture, body) {
   return new THREE.Mesh(geometry, [rim, rim, rim, rim, face, rim]);
 }
 
+/* ---------- keyboard sounds, synthesised on the fly ---------- */
+const ROWS = ["1234567890-=", "qwertyuiop[]\\", "asdfghjkl;'", "zxcvbnm,./"];
+
+const SPACEBAR = { snap: 880, body: 92, gain: 0.15, pan: 0, decay: 0.08 };
+const BACKSPACE = { snap: 1150, body: 108, gain: 0.085, pan: 0.5, decay: 0.04 };
+const RETURN = { snap: 1480, body: 78, gain: 0.15, pan: 0.62, decay: 0.075 };
+
+const known = new Map([[" ", SPACEBAR], ["\b", BACKSPACE], ["\n", RETURN]]);
+
+/* a key sounds the way it sounds because of where it is on the board */
+function voiceOf(char) {
+  const held = known.get(char);
+  if (held) return held;
+  const key = char.toLowerCase();
+  const row = ROWS.findIndex((keys) => keys.includes(key));
+  const place = row === -1 ? { row: 2, col: 5, span: 10 }
+    : { row, col: ROWS[row].indexOf(key), span: ROWS[row].length - 1 };
+  const shifted = char !== key;
+  const voice = {
+    snap: 1700 + place.row * 250 + (place.col % 4) * 95 + (shifted ? 420 : 0),
+    body: 148 + place.row * 15 + ((place.col * 7) % 11) * 4,
+    gain: 0.085 * (shifted ? 1.18 : 1),
+    pan: ((place.col / place.span) * 2 - 1) * 0.55,
+    decay: 0.042 + (place.col % 3) * 0.005,
+  };
+  known.set(char, voice);
+  return voice;
+}
+
+const sfx = { on: true, played: 0, context: null, noise: null, last: -1 };
+
+function wake() {
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  if (!Ctor) return;
+  if (!sfx.context) {
+    sfx.context = new Ctor();
+    const frames = Math.floor(sfx.context.sampleRate * 0.05);
+    sfx.noise = sfx.context.createBuffer(1, frames, sfx.context.sampleRate);
+    const channel = sfx.noise.getChannelData(0);
+    for (let i = 0; i < frames; i += 1) channel[i] = Math.random() * 2 - 1;
+  }
+  if (sfx.context.state === "suspended") sfx.context.resume();
+}
+
+addEventListener("pointerdown", wake);
+addEventListener("keydown", wake);
+
+function keyclick(stroke) {
+  if (!sfx.on || !sfx.context || sfx.context.state !== "running") return;
+  const now = sfx.context.currentTime;
+  if (now - sfx.last < 0.018) return;
+  sfx.last = now;
+  const voice = voiceOf(stroke.closes && stroke.kind === "add" ? "\n" : stroke.char);
+  const wobble = 0.97 + Math.random() * 0.06;
+
+  const panner = sfx.context.createStereoPanner();
+  panner.pan.value = voice.pan;
+  panner.connect(sfx.context.destination);
+
+  const out = sfx.context.createGain();
+  out.gain.setValueAtTime(0.0001, now);
+  out.gain.exponentialRampToValueAtTime(voice.gain * (0.9 + Math.random() * 0.2), now + 0.002);
+  out.gain.exponentialRampToValueAtTime(0.0001, now + voice.decay + 0.012);
+  out.connect(panner);
+
+  const snap = sfx.context.createBufferSource();
+  snap.buffer = sfx.noise;
+  const band = sfx.context.createBiquadFilter();
+  band.type = "bandpass";
+  band.frequency.value = voice.snap * wobble;
+  band.Q.value = 1.4;
+  snap.connect(band).connect(out);
+  snap.start(now);
+  snap.stop(now + 0.03);
+
+  const body = sfx.context.createOscillator();
+  body.type = "triangle";
+  body.frequency.setValueAtTime(voice.body * wobble, now);
+  const thud = sfx.context.createGain();
+  thud.gain.setValueAtTime(0.9, now);
+  thud.gain.exponentialRampToValueAtTime(0.0001, now + voice.decay);
+  body.connect(thud).connect(out);
+  body.start(now);
+  body.stop(now + voice.decay + 0.02);
+
+  sfx.played += 1;
+}
+
 /* ---------- stage ---------- */
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(2, devicePixelRatio));
@@ -195,12 +284,18 @@ function timelineOf(hunk) {
     edits.push({ key, kind: line.kind, start, end, chars, per });
   });
   const total = at + TAIL_MS;
-  const keystrokes = [0];
+  const strokes = [];
   edits.forEach((edit) => {
-    for (let i = 0; i <= edit.chars; i += 1) keystrokes.push(edit.start + i * edit.per);
+    const body = bodyOf(hunk.lines[edit.key].text);
+    for (let i = 1; i <= edit.chars; i += 1) {
+      strokes.push({ at: edit.start + i * edit.per, kind: edit.kind,
+        char: edit.kind === "add" ? body[i - 1] || " " : "\b",
+        closes: i === edit.chars });
+    }
   });
-  keystrokes.push(total);
-  return { edits, total, keystrokes, starts: [0, ...edits.map((e) => e.start), total] };
+  const starts = [0, ...edits.map((edit) => edit.start), total];
+  const keystrokes = [...starts, ...strokes.map((stroke) => stroke.at)].sort((a, b) => a - b);
+  return { edits, total, strokes, keystrokes, starts };
 }
 
 /* what the file looks like at time t: the layout falls out of hunk order */
@@ -319,6 +414,7 @@ let rate = NORMAL;
 let auto = false;
 let hunk = null;
 let timeline = null;
+let heard = 0;
 let framing = { width: 10 };
 
 const transport = document.getElementById("transport");
@@ -340,6 +436,12 @@ const ACTIONS = {
   back: (coarse) => seek(-1, coarse),
   forward: (coarse) => seek(1, coarse),
   rate: (step) => setRate(rate + (step || 1)),
+  sound: () => {
+    sfx.on = !sfx.on;
+    wake();
+    button("sound").textContent = sfx.on ? "sound" : "muted";
+    button("sound").classList.toggle("live", !sfx.on);
+  },
 };
 
 function setRate(next) {
@@ -421,6 +523,7 @@ addEventListener("keydown", (e) => {
   else if (e.key === "<") ACTIONS.back(true);
   else if (e.key === ">") ACTIONS.forward(true);
   else if (e.key === "b" || e.key === "r") ACTIONS.rewind();
+  else if (e.key === "m") ACTIONS.sound();
   else if (e.key === "x") ACTIONS.rate(1);
   else if (e.key === "X") ACTIONS.rate(-1);
   else if (e.key === "ArrowRight" || e.key === "n") goto(at + 1);
@@ -434,6 +537,14 @@ function frame(now) {
   last = now;
   clock = Math.min(timeline.total, Math.max(0, clock + dt * speed * RATES[rate]));
   if (auto && speed > 0 && clock >= timeline.total) goto(at + 1);
+
+  if (clock < heard) heard = clock;
+  else if (clock > heard) {
+    timeline.strokes.forEach((stroke) => {
+      if (stroke.at > heard && stroke.at <= clock) keyclick(stroke);
+    });
+    heard = clock;
+  }
 
   const doc = documentAt(hunk, timeline, clock);
   syncPage(doc, data.files[hunk.file].language, speed > 0,
