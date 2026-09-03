@@ -560,7 +560,8 @@ function syncPage(doc, language, typing, live_caret) {
 
 /* ---------- transport ---------- */
 const CONTEXTS = [0, 3, 8, 20, 60];
-let sceneContext = 3; // lines of context the scene we hold was built with
+const PLAIN_CONTEXT = 8; // what the tool serves unless asked otherwise
+let sceneContext = PLAIN_CONTEXT; // lines of context the scene we hold was built with
 let fetching = null;  // the width being fetched, while a reload is in flight
 const RATES = [0.25, 0.5, 0.7, 1, 2.5, 6];
 const NORMAL = RATES.indexOf(1);
@@ -661,7 +662,7 @@ function syncFrontBtn() {
 function syncCtxBtn() {
   const waiting = fetching !== null;
   button("ctx").textContent = "ctx " + (waiting ? fetching + " .." : sceneContext);
-  button("ctx").classList.toggle("live", !waiting && sceneContext !== 3);
+  button("ctx").classList.toggle("live", !waiting && sceneContext !== PLAIN_CONTEXT);
   button("ctx").classList.toggle("busy", waiting);
   button("ctx").disabled = waiting;
   document.getElementById("busy").classList.toggle("on", waiting);
@@ -919,7 +920,7 @@ function loadScene(context) {
     .then((r) => r.json())
     .then((loaded) => {
       data = loaded;
-      sceneContext = data.meta.context === undefined ? 3 : data.meta.context;
+      sceneContext = data.meta.context === undefined ? PLAIN_CONTEXT : data.meta.context;
       fetching = null;
       describeScene();
       strip.innerHTML = "";

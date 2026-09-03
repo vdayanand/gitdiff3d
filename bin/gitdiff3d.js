@@ -19,13 +19,13 @@ options:
   --max-hunks <n>  keep only the first n hunks (default: all)
   --order <how>    story (definitions before their callers, schema before docs)
                    or git (the order git prints them in). default: story
-  --context <n>    lines of unchanged code around each hunk (default: 3)
+  --context <n>    lines of unchanged code around each hunk (default: 8)
   --json       print the scene model, do not serve
   --no-open    serve without opening a browser
   -h, --help   this message`;
 
 function readArgs(argv) {
-  const flags = { port: 0, json: false, open: true, maxHunks: 0, order: "story", context: 3 };
+  const flags = { port: 0, json: false, open: true, maxHunks: 0, order: "story", context: 8 };
   const revisions = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
