@@ -18,7 +18,6 @@
   #brand h1 { margin:0; font-size:13px; letter-spacing:.16em; text-transform:uppercase; }
   #brand div { color:var(--dim); margin-top:3px; }
   #where { top:16px; left:50%; transform:translateX(-50%); text-align:center; white-space:nowrap; }
-  #where .path { color:var(--fg); }
   #where .sym { color:var(--accent); }
   #where .meta { color:var(--dim); margin-top:3px; }
   #keys { bottom:74px; left:16px; color:var(--dim); animation-delay:.1s; }
@@ -27,7 +26,7 @@
     gap:8px; padding:6px; background:rgba(10,14,20,.8); border:1px solid var(--edge);
     border-radius:9px; backdrop-filter:blur(7px); }
   #transport { display:flex; gap:4px; flex:0 0 auto; }
-  #transport button { all:unset; cursor:pointer; padding:0 11px; border-radius:5px;
+  #transport button { all:unset; cursor:pointer; padding:0 10px; border-radius:5px;
     color:var(--dim); background:#16202c; font:inherit; line-height:26px;
     transition:color .15s, background .15s; }
   #transport button:hover { color:var(--fg); background:#1e2c3c; }
@@ -49,21 +48,25 @@
 <div class="panel" id="brand"><h1>gitdiff3d</h1><div id="label">loading...</div></div>
 <div class="panel" id="where"><div class="path"></div><div class="meta"></div></div>
 <div class="panel" id="keys">
-  <b>space</b> pause &middot; <b>b</b> rewind &middot; <b>r</b> replay &middot;
-  <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>a</b> autoplay &middot; drag orbit<br>
-  <span class="del">removed lines</span> peel off into a faded pile below
+  <b>space</b> pause &middot; <b>,</b>/<b>.</b> keystroke &middot; <b>&lt;</b>/<b>&gt;</b> whole line &middot;
+  <b>b</b>/<b>r</b> rewind &middot;
+  <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>a</b> autoplay<br>
+  every change is typed out: <span class="del">removals erase</span>,
+  <span class="add">additions type in</span>
 </div>
 <div id="bar">
   <div id="transport">
     <button data-act="rewind">rewind</button>
+    <button data-act="back" title="one keystroke back, shift-click for a whole line">back</button>
     <button data-act="toggle">pause</button>
-    <button data-act="replay">replay</button>
+    <button data-act="forward" title="one keystroke on, shift-click for a whole line">fwd</button>
+    <button data-act="rate">1x</button>
   </div>
   <div id="strip"></div>
 </div>
 <script src="vendor/three.min.js"></script>
 <script>
-/* ---------- text metrics: world units are derived from the glyph advance ---------- */
+/* ---------- text metrics: world units follow the glyph advance ---------- */
 const FONT_PX = 32, CANVAS_H = 44, CH = 0.135, THICK = 0.07, GUTTER = 6;
 
 const probe = document.createElement("canvas").getContext("2d");
@@ -99,11 +102,10 @@ function tokenize(line, language) {
   return out;
 }
 
-/* ---------- one plate per line, text baked into a canvas ---------- */
 const SKIN = {
-  ctx: { paper: "#0d131c", body: 0x18222f, ink: PALETTE.name },
-  del: { paper: "#1b1013", body: 0x7a2530, ink: "#ffb3ba" },
-  add: { paper: "#0c1a13", body: 0x1f6b46, ink: "#b9f4d2" },
+  ctx: { paper: "#0d131c", body: 0x18222f },
+  del: { paper: "#1b1013", body: 0x7a2530 },
+  add: { paper: "#0c1a13", body: 0x1f6b46 },
 };
 
 function paint(width, draw) {
@@ -119,9 +121,9 @@ function paint(width, draw) {
   return texture;
 }
 
-const codeTexture = (line, body, language) =>
+const codeTexture = (kind, body, language) =>
   paint(Math.max(body.length, 1), (g, c) => {
-    g.fillStyle = SKIN[line.kind].paper;
+    g.fillStyle = SKIN[kind].paper;
     g.fillRect(0, 0, c.width, c.height);
     let column = 0;
     for (const token of tokenize(body, language)) {
@@ -131,13 +133,12 @@ const codeTexture = (line, body, language) =>
     }
   });
 
-const gutterTexture = (line) =>
+const gutterTexture = (kind, number) =>
   paint(GUTTER, (g, c) => {
-    const number = line.kind === "del" ? line.oldNo : line.newNo;
     g.fillStyle = "#0a0f16";
     g.fillRect(0, 0, c.width, c.height);
-    g.fillStyle = line.kind === "add" ? "#3ddc84" : line.kind === "del" ? "#ff5c6c" : "#2c3a4a";
-    g.fillText(line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ", 0, c.height / 2);
+    g.fillStyle = kind === "add" ? "#3ddc84" : kind === "del" ? "#ff5c6c" : "#2c3a4a";
+    g.fillText(kind === "add" ? "+" : kind === "del" ? "-" : " ", 0, c.height / 2);
     g.fillStyle = "#4b5b73";
     g.fillText(String(number === null ? "" : number).padStart(4), 1.6 * ADVANCE, c.height / 2);
   });
@@ -148,8 +149,7 @@ function plate(chars, texture, body) {
   geometry.translate(width / 2, 0, 0);
   const face = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
   const rim = new THREE.MeshBasicMaterial({ color: body, transparent: true });
-  const mesh = new THREE.Mesh(geometry, [rim, rim, rim, rim, face, rim]);
-  return { mesh, materials: [face, rim] };
+  return new THREE.Mesh(geometry, [rim, rim, rim, rim, face, rim]);
 }
 
 /* ---------- stage ---------- */
@@ -159,9 +159,9 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 400);
 
-const orbit = { theta: Math.PI / 2 - 0.44, phi: Math.PI / 2 - 0.17, radius: 30,
+const orbit = { theta: Math.PI / 2 - 0.4, phi: Math.PI / 2 - 0.15, radius: 26,
   target: new THREE.Vector3() };
-const goal = { radius: 30, target: new THREE.Vector3() };
+const goal = { radius: 26, target: new THREE.Vector3() };
 
 let drag = null;
 renderer.domElement.addEventListener("pointerdown", (e) => (drag = { x: e.clientX, y: e.clientY }));
@@ -176,189 +176,230 @@ addEventListener("wheel", (e) => {
   goal.radius = Math.min(300, Math.max(4, goal.radius * (1 + Math.sign(e.deltaY) * 0.09)));
 }, { passive: true });
 
-/* ---------- the walk ---------- */
-const RUN = 2100, HOLD = 1100, GHOST = 0.17, REWIND = -1.7;
-const clamp01 = (x) => Math.min(1, Math.max(0, x));
-const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
-const lerp = (a, b, k) => a + (b - a) * k;
+/* ---------- the edit timeline: one entry per changed line ---------- */
+const TYPE_MS = 16, ERASE_MS = 7, THINK_MS = 190, SETTLE_MS = 150, TAIL_MS = 900;
 
+const indentOf = (text) => text.length - text.trimStart().length;
+const bodyOf = (text) => text.slice(indentOf(text));
+
+function timelineOf(hunk) {
+  let at = 0;
+  const edits = [];
+  hunk.lines.forEach((line, key) => {
+    if (line.kind === "ctx") return;
+    const chars = Math.max(1, bodyOf(line.text).length);
+    const per = line.kind === "add" ? TYPE_MS : ERASE_MS;
+    const start = at + (line.kind === "add" ? THINK_MS : SETTLE_MS);
+    const end = start + chars * per;
+    at = end;
+    edits.push({ key, kind: line.kind, start, end, chars, per });
+  });
+  const total = at + TAIL_MS;
+  const keystrokes = [0];
+  edits.forEach((edit) => {
+    for (let i = 0; i <= edit.chars; i += 1) keystrokes.push(edit.start + i * edit.per);
+  });
+  keystrokes.push(total);
+  return { edits, total, keystrokes, starts: [0, ...edits.map((e) => e.start), total] };
+}
+
+/* what the file looks like at time t: the layout falls out of hunk order */
+function documentAt(hunk, timeline, t) {
+  const state = new Map();
+  timeline.edits.forEach((edit) => {
+    const body = bodyOf(hunk.lines[edit.key].text);
+    if (t >= edit.end) {
+      state.set(edit.key, edit.kind === "add" ? { body, caret: null } : null);
+    } else if (t <= edit.start) {
+      state.set(edit.key, edit.kind === "add" ? null : { body, caret: null });
+    } else {
+      const struck = Math.min(edit.chars,
+        Math.max(1, Math.ceil((t - edit.start) / edit.per - 1e-9)));
+      const shown = edit.kind === "add" ? struck : edit.chars - struck;
+      state.set(edit.key, shown <= 0 && edit.kind === "del"
+        ? null
+        : { body: body.slice(0, shown), caret: shown });
+    }
+  });
+
+  const doc = [];
+  hunk.lines.forEach((line, key) => {
+    if (line.kind === "ctx") {
+      doc.push({ key, kind: "ctx", indent: indentOf(line.text),
+        body: bodyOf(line.text), caret: null, number: line.newNo });
+      return;
+    }
+    const shown = state.get(key);
+    if (shown === null) return;
+    doc.push({ key, kind: line.kind, indent: indentOf(line.text), body: shown.body,
+      caret: shown.caret, number: line.kind === "del" ? line.oldNo : line.newNo });
+  });
+  return doc;
+}
+
+/* ---------- the live page: one keyed group per visible line ---------- */
+const live = new Map();
+const page = new THREE.Group();
+scene.add(page);
+
+const caret = new THREE.Mesh(
+  new THREE.BoxGeometry(CH * 0.16, PLATE_H * 0.9, THICK * 1.4),
+  new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true }));
+caret.visible = false;
+page.add(caret);
+
+function makeLine(entry, language) {
+  const group = new THREE.Group();
+  const gutter = plate(GUTTER, gutterTexture(entry.kind, entry.number), SKIN[entry.kind].body);
+  gutter.position.x = -(GUTTER + 1.2) * CH;
+  group.add(gutter);
+  page.add(group);
+  const held = { group, gutter, code: null, body: null, y: null };
+  refreshCode(held, entry, language);
+  return held;
+}
+
+function refreshCode(held, entry, language) {
+  if (held.body === entry.body) return;
+  if (held.code) {
+    held.group.remove(held.code);
+    held.code.geometry.dispose();
+    held.code.material.forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); });
+  }
+  const code = plate(entry.body.length, codeTexture(entry.kind, entry.body, language),
+    SKIN[entry.kind].body);
+  code.position.x = entry.indent * CH;
+  held.group.add(code);
+  held.code = code;
+  held.body = entry.body;
+}
+
+function drop(held) {
+  page.remove(held.group);
+  held.group.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    materials.forEach((m) => { if (!m) return; if (m.map) m.map.dispose(); m.dispose(); });
+  });
+}
+
+function syncPage(doc, language, typing, live_caret) {
+  const seen = new Set();
+  doc.forEach((entry, row) => {
+    seen.add(entry.key);
+    const held = live.get(entry.key) || makeLine(entry, language);
+    live.set(entry.key, held);
+    refreshCode(held, entry, language);
+    const target = -row * ROW;
+    held.y = held.y === null ? target : held.y + (target - held.y) * 0.28;
+    held.group.position.y = held.y;
+    if (entry.caret !== null) {
+      caret.position.set((entry.indent + entry.caret) * CH + CH * 0.1, held.y, THICK);
+    }
+  });
+  caret.visible = live_caret;
+  caret.material.opacity = typing && doc.some((entry) => entry.caret !== null)
+    ? 1
+    : 0.25 + 0.6 * Math.sin(performance.now() / 260) ** 2;
+  [...live.keys()].forEach((key) => {
+    if (seen.has(key)) return;
+    drop(live.get(key));
+    live.delete(key);
+  });
+}
+
+/* ---------- transport ---------- */
+const RATES = [0.25, 0.5, 0.7, 1, 2.5, 6];
+const NORMAL = RATES.indexOf(1);
 let data = null;
 let at = 0;
 let clock = 0;
-let auto = false;
-let stage = null;
 let speed = 1;
+let rate = NORMAL;
+let auto = false;
+let hunk = null;
+let timeline = null;
+let framing = { width: 10 };
 
-function rowsOf(lines) {
-  let old = 0;
-  let fresh = 0;
-  return lines.map((line) => {
-    const placed = { line, rowOld: old, rowNew: fresh };
-    if (line.kind !== "add") old += 1;
-    if (line.kind !== "del") fresh += 1;
-    return placed;
-  });
+const transport = document.getElementById("transport");
+const button = (act) => transport.querySelector('[data-act="' + act + '"]');
+
+const EPSILON = 0.5;
+
+const seek = (direction, coarse) => {
+  const marks = coarse ? timeline.starts : timeline.keystrokes;
+  clock = direction < 0
+    ? (marks.filter((mark) => mark < clock - EPSILON).pop() ?? 0)
+    : (marks.find((mark) => mark > clock + EPSILON) ?? timeline.total);
+  setSpeed(0);
+};
+
+const ACTIONS = {
+  rewind: () => { clock = 0; },
+  toggle: () => setSpeed(speed > 0 ? 0 : 1),
+  back: (coarse) => seek(-1, coarse),
+  forward: (coarse) => seek(1, coarse),
+  rate: (step) => setRate(rate + (step || 1)),
+};
+
+function setRate(next) {
+  rate = (next + RATES.length) % RATES.length;
+  button("rate").textContent = RATES[rate] + "x";
+  button("rate").classList.toggle("live", rate !== NORMAL);
 }
 
-function buildHunk(hunk) {
-  const file = data.files[hunk.file];
-  const group = new THREE.Group();
-  const rows = rowsOf(hunk.lines);
-  const widest = Math.max(...hunk.lines.map((l) => l.text.length), 20);
-
-  let pile = 0;
-  const parts = rows.map(({ line, rowOld, rowNew }) => {
-    const indent = line.text.length - line.text.trimStart().length;
-    const body = line.text.slice(indent);
-    const skin = SKIN[line.kind];
-    const code = plate(body.length, codeTexture(line, body, file.language), skin.body);
-    const gutter = plate(GUTTER, gutterTexture(line), skin.body);
-    code.mesh.position.x = indent * CH;
-    gutter.mesh.position.x = -(GUTTER + 1.2) * CH;
-    const holder = new THREE.Group();
-    holder.add(code.mesh);
-    holder.add(gutter.mesh);
-    group.add(holder);
-    return { holder, kind: line.kind, rowOld, rowNew,
-      pile: line.kind === "del" ? pile++ : null,
-      materials: [...code.materials, ...gutter.materials] };
-  });
-
-  const rowsOld = rows.filter((r) => r.line.kind !== "add").length;
-  const rowsNew = rows.filter((r) => r.line.kind !== "del").length;
-  const width = widest * CH;
-
-  const sheet = new THREE.PlaneGeometry(width + (GUTTER + 3) * CH, 1);
-  sheet.translate(0, -0.5, 0);
-  const paper = new THREE.Mesh(sheet,
-    new THREE.MeshBasicMaterial({ color: 0x0a0f16, transparent: true, opacity: 0.55 }));
-  paper.position.set(width / 2 - (GUTTER * CH) / 2, ROW * 0.6, -THICK);
-  group.add(paper);
-
-  scene.add(group);
-  const removed = parts.filter((part) => part.kind === "del").length;
-  return { group, parts, paper, rowsOld, rowsNew, width, removed,
-    rowsRest: rowsNew + (removed ? removed + 1 : 0),
-    centre: width / 2 - GUTTER * CH };
+function setSpeed(value) {
+  speed = value;
+  button("toggle").textContent = speed > 0 ? "pause" : "play";
+  button("toggle").classList.toggle("live", speed === 0);
 }
 
-function dispose(node) {
-  node.traverse((child) => {
-    if (child.geometry) child.geometry.dispose();
-    const materials = Array.isArray(child.material) ? child.material : [child.material];
-    materials.forEach((material) => {
-      if (!material) return;
-      if (material.map) material.map.dispose();
-      material.dispose();
-    });
-  });
-}
+transport.querySelectorAll("button").forEach((element) => {
+  element.onclick = (e) => { ACTIONS[element.dataset.act](e.shiftKey); e.currentTarget.blur(); };
+});
 
+/* ---------- hunks ---------- */
 function goto(index) {
   at = (index + data.hunks.length) % data.hunks.length;
+  hunk = data.hunks[at];
+  timeline = timelineOf(hunk);
   clock = 0;
   setSpeed(speed > 0 ? 1 : 0);
-  if (stage) {
-    scene.remove(stage.group);
-    dispose(stage.group);
-  }
-  stage = buildHunk(data.hunks[at]);
+  [...live.values()].forEach(drop);
+  live.clear();
+  const widest = Math.max(...hunk.lines.map((line) => line.text.length), 24);
+  framing = { width: widest * CH, centre: (widest * CH) / 2 - GUTTER * CH };
   describe();
 }
 
 function describe() {
-  const hunk = data.hunks[at];
   const file = data.files[hunk.file];
   document.querySelector("#where .path").innerHTML =
-    "<span class='path'>" + file.path + "</span>" +
-    (hunk.symbol ? " <span class='sym'>" + hunk.symbol + "</span>" : "");
+    file.path + (hunk.symbol ? " <span class='sym'>" + hunk.symbol + "</span>" : "");
   document.querySelector("#where .meta").innerHTML =
     "hunk " + hunk.index + " / " + data.totals.hunks +
     " &middot; line " + hunk.newStart +
     " &middot; <span class='add'>+" + hunk.additions + "</span>" +
     " <span class='del'>-" + hunk.deletions + "</span>" +
+    " &middot; " + timeline.edits.length + " edits" +
     (hunk.comment ? " &middot; <span class='dim'>comment only</span>" : "") +
     (auto ? " &middot; <span class='sym'>autoplay</span>" : "");
   [...strip.children].forEach((seg, i) => seg.classList.toggle("on", i === at));
 }
 
-/* ---------- animation: one parameter, three behaviours ---------- */
-function animate() {
-  const p = clamp01(clock / RUN);
-  const out = ease(clamp01((p - 0.02) / 0.34));
-  const slide = ease(clamp01((p - 0.34) / 0.32));
-  const inn = ease(clamp01((p - 0.62) / 0.38));
-
-  const rows = lerp(stage.rowsOld, stage.rowsRest, slide);
-  const height = rows * ROW;
-  stage.paper.scale.y = lerp(stage.rowsOld, stage.rowsNew, slide) * ROW + ROW * 0.5;
-  goal.target.set(stage.centre, -height / 2 + ROW / 2, 0);
-  goal.radius = Math.max(stage.width * 0.98, height * 1.34) + 6;
-
-  stage.parts.forEach((part) => {
-    const { holder, kind } = part;
-    if (kind === "ctx") {
-      holder.position.set(0, -lerp(part.rowOld, part.rowNew, slide) * ROW, 0);
-      holder.rotation.x = 0;
-      setOpacity(part, 1);
-      return;
-    }
-    if (kind === "del") {
-      const rest = -(stage.rowsNew + 1.2 + part.pile) * ROW;
-      holder.position.set(0, lerp(-part.rowOld * ROW, rest, out), -out * 1.1);
-      holder.rotation.x = -out * 0.32;
-      setOpacity(part, lerp(1, GHOST, out));
-      return;
-    }
-    holder.position.set(0, -part.rowNew * ROW, (1 - inn) * 2.4);
-    holder.rotation.x = (1 - inn) * 1.5;
-    setOpacity(part, inn);
-  });
-}
-
-const setOpacity = (part, value) =>
-  part.materials.forEach((material) => {
-    material.opacity = value;
-    material.visible = value > 0.02;
-  });
-
-/* ---------- transport ---------- */
-const transport = document.getElementById("transport");
-
-const ACTIONS = {
-  rewind: () => setSpeed(speed < 0 ? 0 : REWIND),
-  toggle: () => setSpeed(speed > 0 ? 0 : 1),
-  replay: () => { clock = 0; setSpeed(1); },
-};
-
-function setSpeed(value) {
-  speed = value;
-  const toggle = transport.querySelector('[data-act="toggle"]');
-  toggle.textContent = speed > 0 ? "pause" : "play";
-  toggle.classList.toggle("live", speed === 0);
-  transport.querySelector('[data-act="rewind"]').classList.toggle("live", speed < 0);
-}
-
-transport.querySelectorAll("button").forEach((button) => {
-  button.onclick = (e) => {
-    ACTIONS[button.dataset.act]();
-    e.currentTarget.blur();
-  };
-});
-
 /* ---------- filmstrip ---------- */
 const strip = document.getElementById("strip");
 
 function buildStrip() {
-  data.hunks.forEach((hunk, i) => {
+  data.hunks.forEach((entry, i) => {
     const seg = document.createElement("div");
     seg.className = "seg";
-    seg.title = data.files[hunk.file].path + "  +" + hunk.additions + " -" + hunk.deletions;
-    seg.style.flexGrow = String(Math.max(1, hunk.lines.length));
+    seg.title = data.files[entry.file].path + "  +" + entry.additions + " -" + entry.deletions;
+    seg.style.flexGrow = String(Math.max(1, entry.lines.length));
     const bar = document.createElement("div");
     bar.className = "bar";
     const edge = document.createElement("i");
-    edge.className = hunk.additions >= hunk.deletions ? "add" : "del";
+    edge.className = entry.additions >= entry.deletions ? "add" : "del";
     seg.append(bar, edge);
     seg.onclick = () => goto(i);
     strip.appendChild(seg);
@@ -375,10 +416,15 @@ resize();
 
 addEventListener("keydown", (e) => {
   if (e.key === " ") { e.preventDefault(); ACTIONS.toggle(); }
+  else if (e.key === ",") ACTIONS.back(false);
+  else if (e.key === ".") ACTIONS.forward(false);
+  else if (e.key === "<") ACTIONS.back(true);
+  else if (e.key === ">") ACTIONS.forward(true);
+  else if (e.key === "b" || e.key === "r") ACTIONS.rewind();
+  else if (e.key === "x") ACTIONS.rate(1);
+  else if (e.key === "X") ACTIONS.rate(-1);
   else if (e.key === "ArrowRight" || e.key === "n") goto(at + 1);
   else if (e.key === "ArrowLeft" || e.key === "p") goto(at - 1);
-  else if (e.key === "r") ACTIONS.replay();
-  else if (e.key === "b") ACTIONS.rewind();
   else if (e.key === "a") { auto = !auto; describe(); }
 });
 
@@ -386,11 +432,16 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(50, now - last);
   last = now;
-  clock = Math.min(RUN + HOLD, Math.max(0, clock + dt * speed));
-  if (clock === 0 && speed < 0) setSpeed(0);
-  if (auto && speed > 0 && clock >= RUN + HOLD) goto(at + 1);
+  clock = Math.min(timeline.total, Math.max(0, clock + dt * speed * RATES[rate]));
+  if (auto && speed > 0 && clock >= timeline.total) goto(at + 1);
 
-  animate();
+  const doc = documentAt(hunk, timeline, clock);
+  syncPage(doc, data.files[hunk.file].language, speed > 0,
+    clock > 0 && clock < timeline.total);
+
+  const height = doc.length * ROW;
+  goal.target.set(framing.centre, -height / 2 + ROW / 2, 0);
+  goal.radius = Math.max(framing.width * 0.98, height * 1.34) + 6;
   orbit.radius += (goal.radius - orbit.radius) * 0.08;
   orbit.target.lerp(goal.target, 0.1);
   camera.position.set(
@@ -400,7 +451,7 @@ function frame(now) {
   camera.lookAt(orbit.target);
 
   const current = strip.children[at];
-  if (current) current.firstChild.style.width = clamp01(clock / RUN) * 100 + "%";
+  if (current) current.firstChild.style.width = (clock / timeline.total) * 100 + "%";
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
@@ -412,6 +463,7 @@ fetch("scene.json").then((r) => r.json()).then((loaded) => {
     "<span class='add'>+" + data.totals.additions + "</span> " +
     "<span class='del'>-" + data.totals.deletions + "</span>";
   buildStrip();
+  setRate(NORMAL);
   setSpeed(1);
   goto(0);
   requestAnimationFrame(frame);

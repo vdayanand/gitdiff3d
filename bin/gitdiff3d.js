@@ -64,7 +64,7 @@ async function main() {
   const url = "http://127.0.0.1:" + port + "/";
   console.log(scene.totals.files + " files, " + scene.totals.hunks + " hunks, +" +
     scene.totals.additions + " -" + scene.totals.deletions + "  ->  " + url);
-  console.log("keys: space pause, b rewind, r replay, arrows hunk, a autoplay");
+  console.log("keys: space pause, , . keystroke, < > line, b rewind, arrows hunk, x/X speed, a autoplay");
   if (flags.open) execFile("open", [url]);
 }
 
