@@ -62,13 +62,27 @@ It builds the scene, serves it on a random local port, and opens your browser.
 --no-open         serve without opening a browser
 ```
 
-## Playback
+## Typing: it defeats skimming
 
 A hunk does not simply appear, it gets typed: deletions erase, additions type
 in, and the camera follows the caret. Pause it, step it one keystroke at a time,
 or wind the speed up.
 
 ![a hunk typing itself out, deletions erasing and additions appearing](docs/typing.gif)
+
+```
+  ALL AT ONCE                     ONE AT A TIME
+  40 lines land in one glance     line 1  ->  read
+  ||||||||||||||||||||||          line 2  ->  read
+  working memory holds ~4         line 3  ->  read
+  brain: "looks fine"             brain has no choice
+```
+
+Two separate things happen here. Working memory holds about four chunks, so a
+40-line hunk shown at once cannot be read, only pattern-matched, and the honest
+name for that is skimming. Separately, a sequence implies cause and effect, and
+people remember stories far better than lists, which is what `--order story` is
+really buying.
 
 ## Story order
 
@@ -79,11 +93,29 @@ that name, and failing that, schema before models before logic before callers
 before tests before prose. It is a topological sort over "who defines what",
 with the file's role as the tie breaker. `--order git` turns it off.
 
-## Overlay
+## Overlay: it defeats change blindness
 
 Press `l` and the old version of the hunk sits behind the new one, both in
 frame, separated in depth rather than side by side. This is the one thing a flat
 diff cannot do. That is the animation at the top of this page.
+
+```
+  SIDE BY SIDE                        OVERLAY
+  old          new                    new   (front plane)
+  +--------+   +--------+             +--------+
+  | a b c  |<->| a b d  |             | a b d  |
+  +--------+   +--------+             |.a.b.c..|  old (behind)
+                                      +--------+
+  eye jumps left-right                no jump
+  memory must hold one side           both land on the same retina spot
+  while looking at the other          difference pops out by itself
+```
+
+This is the blink comparator. Tombaugh found Pluto by flickering two
+photographic plates in the same position and letting the one moving dot jump out
+at him. Nobody finds a moving dot by looking at two plates side by side, because
+that turns a preattentive pop-out into a memory task. The `l` key does the same
+trick with depth instead of flicker.
 
 ## Keys
 
