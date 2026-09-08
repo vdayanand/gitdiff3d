@@ -158,6 +158,12 @@ just get no symbol names and no story order.
 
 Binary files are skipped. Very long lines are clipped to 200 characters.
 
+## Written with Claude
+
+This tool was built with Claude Code: the diff parser, the structure and layout
+passes, the story ordering, the 3d viewer, and this page. It is a small enough
+program to read end to end, and reading it is the only way to trust it.
+
 ## Licence
 
 GNU General Public License, version 3 or later. See [LICENSE](LICENSE).
