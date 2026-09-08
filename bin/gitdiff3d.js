@@ -75,8 +75,10 @@ async function main() {
     const lines = context === null ? flags.context : context;
     if (!built.has(lines)) {
       const diff = parseDiff(diffText(revisions, root, lines));
+      // The scene travels: it is served, printed and pasted, so it carries no
+      // path from the machine that built it.
       built.set(lines, orderHunks(
-        buildScene(diff, { root, label, context: lines }, readSource, flags.maxHunks),
+        buildScene(diff, { label, context: lines }, readSource, flags.maxHunks),
         flags.order,
       ));
     }
