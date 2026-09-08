@@ -5,13 +5,14 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>gitdiff3d</title>
 <style>
-  :root { --bg:#080b11; --fg:#c9d4e2; --dim:#63718a; --add:#3ddc84; --del:#ff5c6c;
-          --edge:#1e2836; --accent:#7dcfff; }
+  :root { --bg:#1a1b26; --fg:#c0caf5; --dim:#565f89; --add:#9ece6a; --del:#f7768e;
+          --edge:#2f334d; --accent:#7dcfff; --chrome:rgba(26,27,38,.82);
+          --key:#24263a; --keyOn:#2f3247; --on:#1a1b26; --fill:#2b3b5e; }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
     font:13px/1.5 "SF Mono",Menlo,Consolas,monospace; overflow:hidden; }
   canvas { display:block; }
-  .panel { position:fixed; padding:11px 14px; background:rgba(10,14,20,.8);
+  .panel { position:fixed; padding:11px 14px; background:var(--chrome);
     border:1px solid var(--edge); border-radius:9px; backdrop-filter:blur(7px);
     animation:rise .45s ease both; }
   #brand { top:16px; left:16px; }
@@ -35,16 +36,16 @@
   #note .why { margin-top:4px; }
   #bar { position:fixed; left:16px; right:16px; bottom:16px; min-height:40px; display:flex;
     flex-wrap:wrap; align-items:center; gap:6px; padding:6px;
-    background:rgba(10,14,20,.8); border:1px solid var(--edge);
+    background:var(--chrome); border:1px solid var(--edge);
     border-radius:9px; backdrop-filter:blur(7px); }
   #transport { display:flex; flex-wrap:wrap; gap:4px; flex:0 1 auto; }
   #transport button { all:unset; cursor:pointer; padding:0 10px; border-radius:5px;
-    color:var(--dim); background:#16202c; font:inherit; line-height:26px;
+    color:var(--dim); background:var(--key); font:inherit; line-height:26px;
     transition:color .15s, background .15s; }
-  #transport button:hover { color:var(--fg); background:#1e2c3c; }
-  #transport button.live { color:#08101a; background:var(--accent); font-weight:600; }
+  #transport button:hover { color:var(--fg); background:var(--keyOn); }
+  #transport button.live { color:var(--on); background:var(--accent); font-weight:600; }
   #transport button:disabled { opacity:.35; cursor:default; }
-  #transport button.busy { color:var(--accent); background:#16202c; opacity:1;
+  #transport button.busy { color:var(--accent); background:var(--key); opacity:1;
     animation:blink 1s ease-in-out infinite; }
   #busy { position:fixed; top:0; left:0; right:0; height:2px; overflow:hidden;
     opacity:0; transition:opacity .18s; pointer-events:none; }
@@ -53,13 +54,13 @@
     animation:slide 1.05s ease-in-out infinite; }
   @keyframes slide { from { transform:translateX(-105%); } to { transform:translateX(480%); } }
   @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:.45; } }
-  #transport button:disabled:hover { color:var(--dim); background:#16202c; }
+  #transport button:disabled:hover { color:var(--dim); background:var(--key); }
   #strip { display:flex; gap:3px; flex:1 1 220px; min-height:26px; }
   #strip .seg { position:relative; flex:1 1 0; min-width:6px; border-radius:4px;
-    background:#16202c; cursor:pointer; overflow:hidden; transition:background .15s; }
-  #strip .seg:hover { background:#1e2c3c; }
+    background:var(--key); cursor:pointer; overflow:hidden; transition:background .15s; }
+  #strip .seg:hover { background:var(--keyOn); }
   #strip .seg.on { outline:1px solid var(--accent); }
-  #strip .seg .bar { position:absolute; inset:0; width:0; background:#24405c; }
+  #strip .seg .bar { position:absolute; inset:0; width:0; background:var(--fill); }
   #strip .seg i { position:absolute; inset:auto 0 0 0; height:3px; }
   #strip .seg i.add { background:var(--add); } #strip .seg i.del { background:var(--del); }
   .add { color:var(--add); } .del { color:var(--del); } .dim { color:var(--dim); }
@@ -79,7 +80,7 @@
   <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>m</b> sound &middot; <b>v</b> voice &middot; <b>f</b> full &middot; <b>a</b> autoplay<br>
   <b>wheel</b> or <b>j</b>/<b>k</b> scroll &middot; <b>ctrl-wheel</b> or <b>+</b>/<b>&minus;</b> zoom &middot;
   <b>shift-wheel</b> sideways &middot; <b>0</b> refit and follow &middot; <b>c</b> context &middot; <b>l</b> overlay &middot; <b>g</b>/<b>G</b> front/back &middot;
-  <b>drag</b> orbit &middot; <b>?</b> hide this<br>
+  <b>t</b> theme &middot; <b>drag</b> orbit &middot; <b>?</b> hide this<br>
   every change is typed out: <span class="del">removals erase</span>,
   <span class="add">additions type in</span>
   </div>
@@ -100,6 +101,7 @@
     <button data-act="front" title="how solid the additions in front are (g)">front solid</button>
     <button data-act="behind" title="how solid the removals behind are (G)">back solid</button>
     <button data-act="ctx" title="lines of context around each change (c)">ctx 3</button>
+    <button data-act="theme" title="colour theme (t, shift-t back)">tokyo night</button>
     <button data-act="fit" title="back to fit (0)">fit</button>
     <button data-act="full" title="fill the screen (f)">full</button>
   </div>
@@ -116,8 +118,69 @@ const ADVANCE = probe.measureText("0").width;
 const PLATE_H = (CH * CANVAS_H) / ADVANCE;
 const ROW = PLATE_H * 1.32;
 
-const PALETTE = { keyword:"#7aa2ff", string:"#e0af68", comment:"#566a86",
-  number:"#bb9af7", call:"#7dcfff", name:"#b8c6da", punct:"#8091a8" };
+/* ---------- themes ----------
+   A theme names only the colours an editor names; papers, rims and chrome are
+   mixed from them, so every theme stays consistent without a table of shades. */
+const THEMES = [
+  { name:"tokyo night", bg:"#1a1b26", fg:"#c0caf5", dim:"#565f89", edge:"#2f334d",
+    accent:"#7dcfff", add:"#9ece6a", del:"#f7768e",
+    keyword:"#bb9af7", string:"#9ece6a", number:"#ff9e64", call:"#7aa2ff" },
+  { name:"dracula", bg:"#282a36", fg:"#f8f8f2", dim:"#6272a4", edge:"#44475a",
+    accent:"#8be9fd", add:"#50fa7b", del:"#ff5555",
+    keyword:"#ff79c6", string:"#f1fa8c", number:"#bd93f9", call:"#50fa7b" },
+  { name:"one dark", bg:"#282c34", fg:"#abb2bf", dim:"#5c6370", edge:"#3e4451",
+    accent:"#61afef", add:"#98c379", del:"#e06c75",
+    keyword:"#c678dd", string:"#98c379", number:"#d19a66", call:"#61afef" },
+  { name:"nord", bg:"#2e3440", fg:"#d8dee9", dim:"#616e88", edge:"#3b4252",
+    accent:"#88c0d0", add:"#a3be8c", del:"#bf616a",
+    keyword:"#81a1c1", string:"#a3be8c", number:"#b48ead", call:"#8fbcbb" },
+  { name:"gruvbox", bg:"#282828", fg:"#ebdbb2", dim:"#928374", edge:"#3c3836",
+    accent:"#83a598", add:"#b8bb26", del:"#fb4934",
+    keyword:"#fb4934", string:"#b8bb26", number:"#d3869b", call:"#8ec07c" },
+  { name:"solarized dark", bg:"#002b36", fg:"#93a1a1", dim:"#586e75", edge:"#073642",
+    accent:"#268bd2", add:"#859900", del:"#dc322f",
+    keyword:"#859900", string:"#2aa198", number:"#d33682", call:"#268bd2" },
+  { name:"solarized light", bg:"#fdf6e3", fg:"#586e75", dim:"#93a1a1", edge:"#e4ddc8",
+    accent:"#268bd2", add:"#859900", del:"#dc322f",
+    keyword:"#859900", string:"#2aa198", number:"#d33682", call:"#268bd2" },
+  { name:"github light", bg:"#ffffff", fg:"#24292f", dim:"#6e7781", edge:"#d0d7de",
+    accent:"#0969da", add:"#1a7f37", del:"#cf222e",
+    keyword:"#cf222e", string:"#0a3069", number:"#0550ae", call:"#8250df" },
+];
+
+const channels = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+const byte = (value) => Math.round(value).toString(16).padStart(2, "0");
+const mix = (a, b, weight) => "#" + channels(a)
+  .map((from, i) => byte(from + (channels(b)[i] - from) * weight)).join("");
+const wash = (hex, alpha) => "rgba(" + channels(hex).join(",") + "," + alpha + ")";
+const asInt = (hex) => parseInt(hex.slice(1), 16);
+
+function lookOf(theme) {
+  const paper = (tint) => mix(theme.bg, tint, 0.14);
+  const rim = (tint) => asInt(mix(theme.bg, tint, 0.55));
+  return {
+    palette: { keyword: theme.keyword, string: theme.string, comment: theme.dim,
+      number: theme.number, call: theme.call, name: theme.fg,
+      punct: mix(theme.fg, theme.dim, 0.6) },
+    skin: {
+      ctx: { paper: mix(theme.bg, theme.fg, 0.05), body: asInt(mix(theme.bg, theme.fg, 0.16)) },
+      del: { paper: paper(theme.del), body: rim(theme.del) },
+      add: { paper: paper(theme.add), body: rim(theme.add) },
+    },
+    gutter: { paper: mix(theme.bg, theme.fg, 0.02), number: theme.dim,
+      add: theme.add, del: theme.del },
+    caret: asInt(theme.accent),
+    empty: asInt(theme.bg),
+  };
+}
+
+const THEME_KEY = "gitdiff3d-theme";
+let themeAt = 0;
+try {
+  const saved = THEMES.findIndex((theme) => theme.name === localStorage.getItem(THEME_KEY));
+  if (saved !== -1) themeAt = saved;
+} catch (e) {}
+let look = lookOf(THEMES[themeAt]);
 
 const KEYWORD = /^(?:const|let|var|function|func|fn|def|class|struct|interface|type|enum|impl|trait|module|end|return|if|elif|else|elseif|for|while|do|then|switch|case|break|continue|new|delete|await|async|import|export|from|use|package|public|private|protected|static|throw|try|catch|finally|yield|lambda|match|where|with|as|in|of|not|and|or|is|null|nil|None|True|False|true|false|this|self|super|pub|mut)$/;
 
@@ -125,6 +188,7 @@ const HASH_GRAMMAR = /(\s+)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(#.*|--.*)|(\b
 const SLASH_GRAMMAR = /(\s+)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)|(\/\/.*|\/\*.*)|(\b\d[\w.]*)|([A-Za-z_$][\w$]*)|([^\sA-Za-z0-9_$]+)/g;
 
 function tokenize(line, language) {
+  const palette = look.palette;
   const grammar = language === "c-like" ? SLASH_GRAMMAR : HASH_GRAMMAR;
   const out = [];
   grammar.lastIndex = 0;
@@ -132,22 +196,16 @@ function tokenize(line, language) {
   while ((m = grammar.exec(line)) !== null) {
     const [text, space, str, comment, num, word] = m;
     out.push({ text, colour:
-      space ? PALETTE.name
-      : str ? PALETTE.string
-      : comment ? PALETTE.comment
-      : num ? PALETTE.number
-      : word ? (KEYWORD.test(word) ? PALETTE.keyword
-          : line[m.index + text.length] === "(" ? PALETTE.call : PALETTE.name)
-      : PALETTE.punct });
+      space ? palette.name
+      : str ? palette.string
+      : comment ? palette.comment
+      : num ? palette.number
+      : word ? (KEYWORD.test(word) ? palette.keyword
+          : line[m.index + text.length] === "(" ? palette.call : palette.name)
+      : palette.punct });
   }
   return out;
 }
-
-const SKIN = {
-  ctx: { paper: "#0d131c", body: 0x18222f },
-  del: { paper: "#1b1013", body: 0x7a2530 },
-  add: { paper: "#0c1a13", body: 0x1f6b46 },
-};
 
 function paint(width, draw) {
   const c = document.createElement("canvas");
@@ -164,7 +222,7 @@ function paint(width, draw) {
 
 const codeTexture = (kind, body, language) =>
   paint(Math.max(body.length, 1), (g, c) => {
-    g.fillStyle = SKIN[kind].paper;
+    g.fillStyle = look.skin[kind].paper;
     g.fillRect(0, 0, c.width, c.height);
     let column = 0;
     for (const token of tokenize(body, language)) {
@@ -176,11 +234,12 @@ const codeTexture = (kind, body, language) =>
 
 const gutterTexture = (kind, number) =>
   paint(GUTTER, (g, c) => {
-    g.fillStyle = "#0a0f16";
+    g.fillStyle = look.gutter.paper;
     g.fillRect(0, 0, c.width, c.height);
-    g.fillStyle = kind === "add" ? "#3ddc84" : kind === "del" ? "#ff5c6c" : "#2c3a4a";
+    g.fillStyle = kind === "add" ? look.gutter.add
+      : kind === "del" ? look.gutter.del : look.gutter.number;
     g.fillText(kind === "add" ? "+" : kind === "del" ? "-" : " ", 0, c.height / 2);
-    g.fillStyle = "#4b5b73";
+    g.fillStyle = look.gutter.number;
     g.fillText(String(number === null ? "" : number).padStart(4), 1.6 * ADVANCE, c.height / 2);
   });
 
@@ -484,13 +543,13 @@ scene.add(page);
 
 const caret = new THREE.Mesh(
   new THREE.BoxGeometry(CH * 0.16, PLATE_H * 0.9, THICK * 1.4),
-  new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true }));
+  new THREE.MeshBasicMaterial({ color: look.caret, transparent: true }));
 caret.visible = false;
 page.add(caret);
 
 function makeLine(entry, language) {
   const group = new THREE.Group();
-  const gutter = plate(GUTTER, gutterTexture(entry.kind, entry.number), SKIN[entry.kind].body);
+  const gutter = plate(GUTTER, gutterTexture(entry.kind, entry.number), look.skin[entry.kind].body);
   gutter.position.x = -(GUTTER + 1.2) * CH;
   group.add(gutter);
   page.add(group);
@@ -507,7 +566,7 @@ function refreshCode(held, entry, language) {
     held.code.material.forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); });
   }
   const code = plate(entry.body.length, codeTexture(entry.kind, entry.body, language),
-    SKIN[entry.kind].body);
+    look.skin[entry.kind].body);
   code.position.x = entry.indent * CH;
   held.group.add(code);
   held.code = code;
@@ -636,6 +695,7 @@ const ACTIONS = {
     const step = CONTEXTS.indexOf(sceneContext);
     loadScene(CONTEXTS[(step + 1) % CONTEXTS.length]);
   },
+  theme: (back) => wear(themeAt + (back ? -1 : 1)),
   full: () => {
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen().catch(() => {});
@@ -683,6 +743,29 @@ function syncFitBtn() {
   button("fit").classList.toggle("live", off);
   button("fit").title = follow ? "back to fit (0)" : "resume following the caret (0)";
 }
+
+/* A theme change rebakes every plate, so the live lines are dropped and the
+   next frame builds them again in the new colours. */
+function wear(index) {
+  themeAt = (index + THEMES.length) % THEMES.length;
+  const theme = THEMES[themeAt];
+  look = lookOf(theme);
+  const root = document.documentElement.style;
+  ["bg", "fg", "dim", "edge", "accent", "add", "del"]
+    .forEach((token) => root.setProperty("--" + token, theme[token]));
+  root.setProperty("--chrome", wash(theme.bg, 0.82));
+  root.setProperty("--key", mix(theme.bg, theme.fg, 0.09));
+  root.setProperty("--keyOn", mix(theme.bg, theme.fg, 0.18));
+  root.setProperty("--on", theme.bg);
+  root.setProperty("--fill", mix(theme.bg, theme.accent, 0.32));
+  renderer.setClearColor(look.empty);
+  caret.material.color.setHex(look.caret);
+  [...live.values()].forEach(drop);
+  live.clear();
+  button("theme").textContent = theme.name;
+  try { localStorage.setItem(THEME_KEY, theme.name); } catch (e) {}
+}
+wear(themeAt);
 
 function syncFullBtn() {
   const wide = document.fullscreenElement !== null;
@@ -815,6 +898,8 @@ addEventListener("keydown", (e) => {
   else if (e.key === "k") scrollRows(-3);
   else if (e.key === "PageDown") { e.preventDefault(); scrollRows(WINDOW - 2); }
   else if (e.key === "PageUp") { e.preventDefault(); scrollRows(-(WINDOW - 2)); }
+  else if (e.key === "t") ACTIONS.theme(false);
+  else if (e.key === "T") ACTIONS.theme(true);
   else if (e.key === "f") ACTIONS.full();
   else if (e.key === "m") ACTIONS.sound();
   else if (e.key === "v") ACTIONS.voice();
