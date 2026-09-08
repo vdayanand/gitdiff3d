@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none';
+  script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:;
+  connect-src 'self'; base-uri 'none'; form-action 'none'">
 <title>gitdiff3d</title>
 <style>
   :root { --bg:#1a1b26; --fg:#c0caf5; --dim:#565f89; --add:#9ece6a; --del:#f7768e;
@@ -845,10 +848,15 @@ function goto(index) {
   describe();
 }
 
+/* Paths, labels and symbols are whatever the diff said they were, so none of
+   them may become markup. */
+const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const esc = (text) => String(text).replace(/[&<>"']/g, (c) => ESCAPES[c]);
+
 function describe() {
   const file = data.files[hunk.file];
   document.querySelector("#where .path").innerHTML =
-    file.path + (hunk.symbol ? " <span class='sym'>" + hunk.symbol + "</span>" : "");
+    esc(file.path) + (hunk.symbol ? " <span class='sym'>" + esc(hunk.symbol) + "</span>" : "");
   tellNote();
   document.querySelector("#where .meta").innerHTML =
     "hunk " + hunk.index + " / " + data.hunks.length +
@@ -992,8 +1000,18 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-/* the scene comes from this server by default; a host page can point elsewhere */
-const SCENE = new URLSearchParams(location.search).get("scene") || "scene.json";
+/* A host page may point at another scene, but only one this same server
+   serves; an outside url would run its contents in this page's origin. */
+const sameOrigin = (url) => {
+  try {
+    return new URL(url, location.href).origin === location.origin;
+  } catch {
+    return false;
+  }
+};
+
+const asked = new URLSearchParams(location.search).get("scene");
+const SCENE = asked && sameOrigin(asked) ? asked : "scene.json";
 
 const sceneURL = (context) => {
   if (context === null) return SCENE;
@@ -1005,10 +1023,10 @@ function describeScene() {
     ? "first " + data.totals.shown + " of " + data.totals.hunks + " hunks"
     : data.totals.hunks + " hunks";
   document.getElementById("label").innerHTML =
-    data.meta.label + " &middot; " + capped +
+    esc(data.meta.label) + " &middot; " + capped +
     (data.meta.order === "story" ? " &middot; <span class='sym'>story order</span>" : "") +
     (data.meta.narrationError
-      ? " &middot; <span class='del'>no narration: " + data.meta.narrationError + "</span>"
+      ? " &middot; <span class='del'>no narration: " + esc(data.meta.narrationError) + "</span>"
       : "") +
     " &middot; " +
     "<span class='add'>+" + data.totals.additions + "</span> " +
