@@ -7,7 +7,7 @@
   "bugs": "https://github.com/vdayanand/gitdiff3d/issues",
   "repository": { "type": "git", "url": "git+https://github.com/vdayanand/gitdiff3d.git" },
   "author": "Venkatesh Dayanand",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "type": "commonjs",
   "bin": { "gitdiff3d": "./bin/gitdiff3d.js" },
   "files": ["bin", "src", "README.md", "LICENSE"],

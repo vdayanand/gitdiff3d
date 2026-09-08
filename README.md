@@ -101,5 +101,7 @@ Binary files are skipped. Very long lines are clipped to 200 characters.
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE). Bundles [three.js](https://threejs.org) r128,
-also MIT.
+GNU General Public License, version 3 or later. See [LICENSE](LICENSE).
+
+Bundles [three.js](https://threejs.org) r128, which is MIT, and MIT is
+compatible with the GPL.
