@@ -1,5 +1,14 @@
 # gitdiff3d
 
+```
+  BEFORE                            NOW
+  human writes 50 lines             agent writes 2000
+  human remembers the order         nobody remembers anything
+  human reads 50 lines              human must read 2000
+        |                                   |
+   reading is cheap                  reading IS the bottleneck
+```
+
 A git diff is a pile of text. Somebody typed that text, one key at a time, in
 some order that made sense to them. `gitdiff3d` plays it back: your diff becomes
 a 3d scene where every changed line is a plate floating in space, and a caret
