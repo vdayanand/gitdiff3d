@@ -5,7 +5,7 @@ some order that made sense to them. `gitdiff3d` plays it back: your diff becomes
 a 3d scene where every changed line is a plate floating in space, and a caret
 walks through them typing the additions in and erasing the deletions.
 
-![a hunk types itself in, then the old version shows through behind it](docs/overlay.gif)
+![the old version of a hunk showing through behind the new one, as the camera orbits and pushes in](docs/overlay.gif)
 
 ## Install
 
@@ -53,6 +53,14 @@ It builds the scene, serves it on a random local port, and opens your browser.
 --no-open         serve without opening a browser
 ```
 
+## Playback
+
+A hunk does not simply appear, it gets typed: deletions erase, additions type
+in, and the camera follows the caret. Pause it, step it one keystroke at a time,
+or wind the speed up.
+
+![a hunk typing itself out, deletions erasing and additions appearing](docs/typing.gif)
+
 ## Story order
 
 Git prints hunks in path order, which is alphabetical, which is nobody's
@@ -66,9 +74,7 @@ with the file's role as the tie breaker. `--order git` turns it off.
 
 Press `l` and the old version of the hunk sits behind the new one, both in
 frame, separated in depth rather than side by side. This is the one thing a flat
-diff cannot do.
-
-![the old version behind the new one](docs/overlay.png)
+diff cannot do. That is the animation at the top of this page.
 
 ## Keys
 
