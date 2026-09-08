@@ -1,11 +1,15 @@
 {
   "name": "gitdiff3d",
   "version": "0.1.0",
-  "description": "git diff rendered as a 3d scene",
-  "bin": { "gitdiff3d": "./bin/gitdiff3d.js" },
-  "main": "src/index.js",
+  "description": "git diff rendered as a 3d scene, played back hunk by hunk",
+  "keywords": ["git", "diff", "3d", "three", "code-review", "visualization", "cli"],
+  "homepage": "https://github.com/vdayanand/gitdiff3d#readme",
+  "bugs": "https://github.com/vdayanand/gitdiff3d/issues",
+  "repository": { "type": "git", "url": "git+https://github.com/vdayanand/gitdiff3d.git" },
+  "author": "Venkatesh Dayanand",
+  "license": "MIT",
   "type": "commonjs",
-  "engines": { "node": ">=18" },
-  "files": ["bin", "src"],
-  "license": "MIT"
+  "bin": { "gitdiff3d": "./bin/gitdiff3d.js" },
+  "files": ["bin", "src", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" }
 }

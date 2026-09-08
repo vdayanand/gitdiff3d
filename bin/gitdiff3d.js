@@ -41,6 +41,18 @@ function readArgs(argv) {
   return { flags, revisions };
 }
 
+// Whatever this platform calls "hand this url to the browser". A missing
+// opener is not worth failing over; the url is already printed.
+const openerFor = (platform) =>
+  platform === "darwin" ? ["open", []]
+    : platform === "win32" ? ["cmd", ["/c", "start", ""]]
+    : ["xdg-open", []];
+
+const openBrowser = (url) => {
+  const [command, args] = openerFor(process.platform);
+  execFile(command, [...args, url], () => {});
+};
+
 const describe = (revisions, cwd) =>
   revisions.length ? revisions.join(" ") : "working tree vs " + headLabel(cwd);
 
@@ -88,7 +100,7 @@ async function main() {
     scene.totals.additions + " -" + scene.totals.deletions + "  ->  " + url);
   console.log("keys: space pause, , . keystroke, < > line, arrows hunk, l overlay, c context,\n" +
     "      j/k scroll, x/X speed, m sound, v voice, f full, a autoplay, ? help");
-  if (flags.open) execFile("open", [url]);
+  if (flags.open) openBrowser(url);
 }
 
 main().catch((err) => {
