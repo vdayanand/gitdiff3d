@@ -10,15 +10,27 @@ walks through them typing the additions in and erasing the deletions.
 ## Install
 
 ```
+npm i -g github:vdayanand/gitdiff3d
+```
+
+That puts `gitdiff3d` on your path. To try it once and install nothing:
+
+```
+npx github:vdayanand/gitdiff3d
+```
+
+To hack on it, work from a checkout instead, where the link points at your
+working tree and your edits are live:
+
+```
 git clone https://github.com/vdayanand/gitdiff3d
 cd gitdiff3d
 make install          # symlinks bin/gitdiff3d.js into ~/bin
 ```
 
-Or run it straight out of the checkout with `node bin/gitdiff3d.js`.
-
 Node 18 or newer. No dependencies: three.js is vendored, everything else is the
-standard library and the `git` already on your path.
+standard library and the `git` already on your path. To remove it, `npm rm -g
+gitdiff3d`, or `make uninstall` for the checkout.
 
 ## Use
 
