@@ -5,7 +5,7 @@ some order that made sense to them. `gitdiff3d` plays it back: your diff becomes
 a 3d scene where every changed line is a plate floating in space, and a caret
 walks through them typing the additions in and erasing the deletions.
 
-![the viewer playing a hunk](docs/screenshot.png)
+![a hunk types itself in, then the old version shows through behind it](docs/overlay.gif)
 
 ## Install
 
