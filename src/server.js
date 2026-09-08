@@ -27,8 +27,17 @@ function respond(url, query, sceneFor) {
   return spec ? asset(spec) : null;
 }
 
+// The scene is this machine's source code. A browser sent here by a name that
+// happens to resolve to 127.0.0.1 is not the local user, so only the loopback
+// names the local user would type are answered.
+const LOOPBACK = /^(?:127\.0\.0\.1|\[::1\]|localhost)(?::\d+)?$/;
+
 function serve(sceneFor, port) {
   const server = http.createServer((req, res) => {
+    if (!LOOPBACK.test(req.headers.host || "")) {
+      res.writeHead(403).end("not for this host");
+      return;
+    }
     const at = req.url.indexOf("?");
     const path = at === -1 ? req.url : req.url.slice(0, at);
     const query = new URLSearchParams(at === -1 ? "" : req.url.slice(at + 1));

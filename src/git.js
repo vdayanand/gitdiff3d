@@ -48,7 +48,15 @@ const newSideOf = (revisions, cwd) => {
   return revs.length > 1 && isCommit(last, cwd) ? last : null;
 };
 
+// A diff header is text, and text can say "../../elsewhere"; the working tree
+// is the only place this is allowed to read from.
+const insideRoot = (root, filePath) => {
+  const full = path.resolve(root, filePath);
+  return full === root || full.startsWith(root + path.sep);
+};
+
 const sourceOf = (rev, filePath, root) => {
+  if (!insideRoot(root, filePath)) return null;
   try {
     return rev === null
       ? fs.readFileSync(path.join(root, filePath), "utf8")
