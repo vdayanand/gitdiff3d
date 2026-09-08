@@ -49,10 +49,12 @@ const newSideOf = (revisions, cwd) => {
 };
 
 // A diff header is text, and text can say "../../elsewhere"; the working tree
-// is the only place this is allowed to read from.
+// is the only place this is allowed to read from. Both sides are resolved
+// because git reports the root with forward slashes even on Windows.
 const insideRoot = (root, filePath) => {
-  const full = path.resolve(root, filePath);
-  return full === root || full.startsWith(root + path.sep);
+  const base = path.resolve(root);
+  const full = path.resolve(base, filePath);
+  return full === base || full.startsWith(base + path.sep);
 };
 
 const sourceOf = (rev, filePath, root) => {

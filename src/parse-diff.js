@@ -26,7 +26,7 @@ function parseDiff(text) {
     flags = null;
   };
 
-  for (const raw of text.split("\n")) {
+  for (const raw of text.split(/\r?\n/)) {
     const header = FILE_HEADER.exec(raw);
     if (header) {
       closeFile();

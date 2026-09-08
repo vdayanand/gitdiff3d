@@ -97,7 +97,7 @@ const indentUnitOf = (lines) => {
 };
 
 function analyze(language, text) {
-  const lines = text.split("\n");
+  const lines = text.split(/\r?\n/);
   const endOf = language.scope === "braces" ? braceEnd : indentEnd;
   const found = [];
   lines.forEach((line, i) => {

@@ -15,5 +15,4 @@ uninstall:
 	@echo "removed $(TARGET)"
 
 check:
-	@node -e 'require("./src/parse-diff");require("./src/layout");require("./src/structure");require("./src/server");require("./src/git");console.log("modules load")'
-	@node bin/gitdiff3d.js --help > /dev/null && echo "cli responds"
+	@node check.js
