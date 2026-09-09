@@ -14,7 +14,7 @@ some order that made sense to them. `gitdiff3d` plays it back: your diff becomes
 a 3d scene where every changed line is a plate floating in space, and a caret
 walks through them typing the additions in and erasing the deletions.
 
-![the old version of a hunk showing through behind the new one, as the camera orbits and pushes in](docs/overlay.gif)
+![the run of characters that changed lit on both planes, a projection joining them across the depth, as the camera orbits and pushes in](docs/overlay.gif)
 
 ## Install
 
@@ -116,6 +116,31 @@ photographic plates in the same position and letting the one moving dot jump out
 at him. Nobody finds a moving dot by looking at two plates side by side, because
 that turns a preattentive pop-out into a memory task. The `l` key does the same
 trick with depth instead of flicker.
+
+A whole old line behind a whole new one still leaves you hunting, though, when
+only one word moved. So where a removal and the addition after it are plainly
+versions of each other, both lines drop to a whisper except for the run of
+characters that actually differs. That run is lit on each plane, and a
+projection is run between the two:
+
+```
+  const chars = Math.max(1, spanOf(line.text).length);   the new line, in front
+                            ^^^^^^
+                            :====:  the projection, across the gap in depth
+                            vvvvvv
+  const chars = Math.max(1, bodyOf(line.text).length);   the old line, behind
+```
+
+Head on the projection is a hairline and costs nothing; orbit and it opens into
+a ribbon, so you can see which run came from where. A wavefront travels it,
+narrowing or widening as the old text becomes the new, and walking the short way
+round the colour wheel from the removal red to the addition green.
+
+Lines that were rewritten rather than edited keep the plain behaviour: below
+half the characters kept on either side they are not versions of each other,
+there is nothing to point at, and both whole lines are spoken. Nothing is
+projected where nothing was replaced, so a phrase inserted into a line lights up
+in front and leaves only a tick on the line behind.
 
 ## Keys
 
