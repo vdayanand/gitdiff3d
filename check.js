@@ -54,7 +54,7 @@ function repoWith(files) {
 }
 
 function modulesLoad() {
-  ["parse-diff", "layout", "structure", "server", "git", "order"]
+  ["parse-diff", "layout", "structure", "server", "git", "order", "replace"]
     .forEach((name) => require("./src/" + name));
   ok(true, "modules load");
   execFileSync(process.execPath, [CLI, "--help"], { stdio: "ignore" });
@@ -75,10 +75,65 @@ function scenesHaveSymbols() {
     ok(scene.hunks.length === 1, "one hunk");
     ok(scene.files[0].language === "c-like", "language recognised");
     ok(scene.hunks[0].symbol === "alpha", "hunk named by its enclosing function");
+    const edit = scene.hunks[0].rows.find((row) => row.span !== null);
+    ok(edit !== undefined, "the scene ships the row that was edited in place");
+    ok(scene.hunks[0].lines[edit.after].text.slice(...edit.span.after) === "2",
+      "the span points at the character that changed");
     ok(!JSON.stringify(scene).includes(root), "scene carries no path from this machine");
   } finally {
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 });
   }
+}
+
+// A rename inside a line is the whole point of the overlay: the span has to
+// land on the word, cover it whole, and refuse to appear when the two lines
+// have nothing left in common.
+function spansFindTheChangedWords() {
+  const { changedSpan, rowsOf } = require("./src/replace");
+  const of = (before, after) => {
+    const span = changedSpan(before, after);
+    return span === null ? null
+      : [before.slice(...span.before), after.slice(...span.after)];
+  };
+
+  ok(JSON.stringify(of("const a = bodyOf(x);", "const a = spanOf(x);"))
+    === JSON.stringify(["bodyOf", "spanOf"]), "a renamed word is the span, whole");
+  ok(JSON.stringify(of("const bodyOf = 1;", "const bodySpan = 1;"))
+    === JSON.stringify(["bodyOf", "bodySpan"]),
+    "a shared prefix running into a word does not leave half of it behind");
+  ok(JSON.stringify(of("send(payload);", "sendAll(payload);"))
+    === JSON.stringify(["send", "sendAll"]), "a suffix added to a name takes the whole name");
+  ok(JSON.stringify(of("if (a > b) {", "if (a >= b) {"))
+    === JSON.stringify(["", "="]), "tightening an operator is one character arriving");
+  ok(JSON.stringify(of("f(a, b);", "f(a, b, c);"))
+    === JSON.stringify(["", ", c"]), "an insertion leaves the before side empty");
+  ok(changedSpan("return items.filter(ok);", "throw new Error('gone');") === null,
+    "a rewrite has no span");
+  ok(changedSpan("same();", "same();") === null, "identical lines have no span");
+
+  const spanStartsTogether = changedSpan("aaa bodyOf bbb", "aaa spanOf bbb");
+  ok(spanStartsTogether.before[0] === spanStartsTogether.after[0],
+    "both sides of a span start at the same column, so they line up in depth");
+
+  // an insertion sitting between two edits: pairing by position would marry
+  // the second removal to the new line and lose both spans
+  const lines = [
+    { kind: "del", text: "  const a = one(x);" },
+    { kind: "del", text: "  const b = two(x);" },
+    { kind: "add", text: "  const a = ONE(x);" },
+    { kind: "add", text: "  const fresh = brand(x);" },
+    { kind: "add", text: "  const b = TWO(x);" },
+  ];
+  const rows = rowsOf(lines);
+  ok(rows.length === 3, "five lines fold into three rows");
+  ok(rows[0].before === 0 && rows[0].after === 2 && rows[0].span !== null, "first edit paired");
+  ok(rows[1].before === null && rows[1].after === 3, "the inserted line stands alone");
+  ok(rows[2].before === 1 && rows[2].after === 4 && rows[2].span !== null,
+    "the second removal waited for the addition it matches");
+
+  const plain = rowsOf([{ kind: "ctx", text: "x" }, { kind: "del", text: "gone entirely" }]);
+  ok(plain[0].before === 0 && plain[0].after === 0, "an unchanged line is its own before and after");
+  ok(plain[1].before === 1 && plain[1].after === null, "a removal with no partner has no after");
 }
 
 function carriageReturnsAreDropped() {
@@ -121,6 +176,7 @@ async function viewerIsServed() {
 async function main() {
   modulesLoad();
   scenesHaveSymbols();
+  spansFindTheChangedWords();
   carriageReturnsAreDropped();
   await viewerIsServed();
   console.log("all checks passed on " + process.platform + " node " + process.versions.node);

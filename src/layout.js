@@ -1,4 +1,5 @@
 const { languageOf, analyze, innermost } = require("./structure");
+const { rowsOf } = require("./replace");
 
 const MAX_TEXT = 200;
 
@@ -29,6 +30,14 @@ const changeAnchor = (hunk) =>
 
 const hunkOf = (structure) => (hunk) => {
   const symbol = structure && innermost(structure.symbols, changeAnchor(hunk));
+  // spans index the text the viewer holds, so they are found on the clipped
+  // lines rather than on the originals
+  const lines = hunk.lines.map((line) => ({
+    kind: line.kind,
+    text: clip(line.text),
+    oldNo: line.oldNo,
+    newNo: line.newNo,
+  }));
   return {
     oldStart: hunk.oldStart,
     newStart: hunk.newStart,
@@ -36,12 +45,8 @@ const hunkOf = (structure) => (hunk) => {
     additions: countOf(hunk.lines, "add"),
     deletions: countOf(hunk.lines, "del"),
     comment: isCommentOnly(structure, hunk.lines),
-    lines: hunk.lines.map((line) => ({
-      kind: line.kind,
-      text: clip(line.text),
-      oldNo: line.oldNo,
-      newNo: line.newNo,
-    })),
+    lines,
+    rows: rowsOf(lines),
   };
 };
 
