@@ -169,6 +169,8 @@ const mix = (a, b, weight) => "#" + channels(a)
   .map((from, i) => byte(from + (channels(b)[i] - from) * weight)).join("");
 const wash = (hex, alpha) => "rgba(" + channels(hex).join(",") + "," + alpha + ")";
 const asInt = (hex) => parseInt(hex.slice(1), 16);
+const WEIGHT = [0.299, 0.587, 0.114];
+const luma = (hex) => channels(hex).reduce((sum, v, i) => sum + v * WEIGHT[i], 0) / 255;
 
 function lookOf(theme) {
   const paper = (tint) => mix(theme.bg, tint, 0.14);
@@ -182,6 +184,9 @@ function lookOf(theme) {
       del: { paper: paper(theme.del), body: rim(theme.del) },
       add: { paper: paper(theme.add), body: rim(theme.add) },
     },
+    mark: { add: mix(theme.bg, theme.add, 0.34), del: mix(theme.bg, theme.del, 0.34) },
+    sweep: { older: theme.del, newer: theme.add, ground: theme.bg,
+      glows: luma(theme.bg) < 0.5 },
     gutter: { paper: mix(theme.bg, theme.fg, 0.02), number: theme.dim,
       add: theme.add, del: theme.del },
     caret: asInt(theme.accent),
@@ -235,16 +240,30 @@ function paint(width, draw) {
   return texture;
 }
 
-const codeTexture = (kind, body, language) =>
+/* Where a line only changed in one place, that place is spoken and the rest is
+   whispered. A span of no width is a piece taken out rather than swapped, so it
+   leaves a tick and lets the surviving text stay at full voice. */
+const WHISPER = 0.34, TICK = 0.18;
+
+const codeTexture = (kind, body, language, span) =>
   paint(Math.max(body.length, 1), (g, c) => {
     g.fillStyle = look.skin[kind].paper;
     g.fillRect(0, 0, c.width, c.height);
+    const hollow = span !== null && span !== undefined && span[1] === span[0];
+    if (span) {
+      g.fillStyle = look.mark[kind];
+      g.fillRect(span[0] * ADVANCE, 0, Math.max(span[1] - span[0], TICK) * ADVANCE, c.height);
+    }
     let column = 0;
     for (const token of tokenize(body, language)) {
+      const lit = !span || hollow ||
+        (column < span[1] && column + token.text.length > span[0]);
+      g.globalAlpha = lit ? 1 : WHISPER;
       g.fillStyle = token.colour;
       g.fillText(token.text, column * ADVANCE, c.height / 2);
       column += token.text.length;
     }
+    g.globalAlpha = 1;
   });
 
 const gutterTexture = (kind, number) =>
@@ -493,9 +512,10 @@ function documentAt(hunk, timeline, t) {
   return doc;
 }
 
-/* Both versions of a hunk at once, stacked in depth: what a run replaced sits
-   directly behind its replacement, so a rewrite reads as one thing seen through
-   another. A run with nothing opposite it leaves that plane empty at those rows. */
+/* Both versions of a hunk at once, stacked in depth: what a line replaced sits
+   directly behind its replacement. Where the replacement only moved a few
+   characters, the back plane keeps just those characters instead of a whole
+   line you have already read, so what shows through is the change itself. */
 const BEHIND = -2.4, INFRONT = 2.4;
 
 /* Each plane can be solid, faded, or gone, independently: fade the front to read
@@ -508,47 +528,165 @@ const SHADES = [
 let frontFace = 0; // the additions, in front
 let backFace = 0;  // the removals, behind
 
+// a span is measured from the start of the line, a plate from the end of its
+// indent, and a line whose indent itself changed may start before its own body
+const bodySpan = (span, indent) => {
+  const from = Math.max(0, span[0] - indent);
+  return [from, Math.max(from, span[1] - indent)];
+};
+
 function overlayDoc(hunk) {
   const lines = hunk.lines;
-  const place = (line, key, row, z, dim) => ({
-    key, kind: line.kind, indent: indentOf(line.text), body: bodyOf(line.text),
-    caret: null, number: line.kind === "del" ? line.oldNo : line.newNo, row, z, dim,
+  const front = SHADES[frontFace].dim;
+  const back = SHADES[backFace].dim;
+  const out = [];
+
+  hunk.rows.forEach((row, at) => {
+    const seat = { row: at, caret: null, z: 0, span: null };
+
+    if (row.before === row.after) {
+      const line = lines[row.after];
+      out.push({ ...seat, key: "c" + row.after, kind: "ctx", indent: indentOf(line.text),
+        body: bodyOf(line.text), number: line.newNo, dim: 0.5 });
+      return;
+    }
+
+    // an insertion inside a line replaced nothing, so there is nothing for a
+    // projection to set out from; the tick on the line behind already says where
+    const replaced = row.span !== null && row.span.before[1] > row.span.before[0];
+
+    if (row.after !== null) {
+      const line = lines[row.after];
+      const indent = indentOf(line.text);
+      out.push({ ...seat, key: "a" + row.after, kind: "add", indent,
+        body: bodyOf(line.text), number: line.newNo, z: INFRONT, dim: front,
+        span: row.span === null ? null : bodySpan(row.span.after, indent),
+        sweep: replaced ? sweepFor(row.span, Math.min(front, back)) : null });
+    }
+
+    if (row.before === null) return;
+    const line = lines[row.before];
+    const behind = indentOf(line.text);
+    out.push({ ...seat, key: "d" + row.before, kind: "del", indent: behind,
+      body: bodyOf(line.text), number: line.oldNo, z: BEHIND, dim: back,
+      span: row.span === null ? null : bodySpan(row.span.before, behind) });
+  });
+  return out;
+}
+
+/* ---------- the projection: where a replacement came from ----------
+   A replacement is one fragment travelling, not two plates side by side. The
+   hull is the volume it sweeps between the planes, the rays give that volume an
+   edge without fogging the code, and the wavefront is where the fragment is on
+   its way across. Seen head on all three are a hairline, so the flat read costs
+   nothing; they only speak once the camera moves. */
+const ZBACK = BEHIND + THICK / 2, ZFRONT = INFRONT - THICK / 2;
+const SWEEP_MS = 2400, STAGGER = 0.13;
+
+const sweepFor = (span, dim) => ({
+  from: span.before[0] * CH,
+  was: (span.before[1] - span.before[0]) * CH,
+  now: (span.after[1] - span.after[0]) * CH,
+  dim,
+});
+
+const attribute = (values, size) => new THREE.Float32BufferAttribute(values, size);
+
+const shaded = (position, colour) => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", attribute(position, 3));
+  geometry.setAttribute("color", attribute(colour, 3));
+  return geometry;
+};
+
+/* The middle of a beam is empty space. Drawn at even brightness a long one
+   lays a slab across the very code it explains, so it is built from stations
+   along its length and dips in the middle: what you see is where it leaves the
+   old fragment and where it arrives at the new one. */
+/* Hue is a circle and lerpHSL does not know it. Tokyo night's red sits at hue
+   .97, a shade to the magenta side, so a straight walk to green at .25 goes the
+   long way through blue and the wavefront turns a colour the diff never used.
+   The short way round is through orange, which is what the eye expects. */
+const arcOf = (from, to) => {
+  const a = {}, b = {};
+  from.getHSL(a);
+  to.getHSL(b);
+  return { h: a.h, s: a.s, l: a.l,
+    turn: ((b.h - a.h + 1.5) % 1) - 0.5, ds: b.s - a.s, dl: b.l - a.l };
+};
+
+const alongArc = (colour, arc, t) =>
+  colour.setHSL((arc.h + arc.turn * t + 1) % 1, arc.s + arc.ds * t, arc.l + arc.dl * t);
+
+const STATIONS = [0, 0.5, 1];
+const DIP = 0.22;
+const RIM = [-PLATE_H / 2, PLATE_H / 2]; // the two edges the reader looks along
+
+function makeSweep(sweep) {
+  const older = new THREE.Color(look.sweep.older);
+  const newer = new THREE.Color(look.sweep.newer);
+  const ground = new THREE.Color(look.sweep.ground);
+  const stations = STATIONS.map((t) => ({
+    z: ZBACK + (ZFRONT - ZBACK) * t,
+    width: sweep.was + (sweep.now - sweep.was) * t,
+    tint: older.clone().lerp(newer, t).lerp(ground, t > 0 && t < 1 ? 1 - DIP : 0),
+  }));
+
+  const skin = [], skinTint = [], edge = [], edgeTint = [];
+  const put = (into, tint, station, side, y) => {
+    into.push(sweep.from + side * station.width, y, station.z);
+    tint.push(station.tint.r, station.tint.g, station.tint.b);
+  };
+
+  stations.slice(0, -1).forEach((from, i) => {
+    const to = stations[i + 1];
+    RIM.forEach((y) => {
+      [[from, 0], [from, 1], [to, 1], [from, 0], [to, 1], [to, 0]]
+        .forEach(([station, side]) => put(skin, skinTint, station, side, y));
+      [0, 1].forEach((side) => {
+        put(edge, edgeTint, from, side, y);
+        put(edge, edgeTint, to, side, y);
+      });
+    });
   });
 
-  const out = [];
-  let row = 0;
-  let at = 0;
-  while (at < lines.length) {
-    const kind = lines[at].kind;
-    let stop = at;
-    while (stop < lines.length && lines[stop].kind === kind) stop += 1;
+  const glow = look.sweep.glows ? THREE.AdditiveBlending : THREE.NormalBlending;
+  const hull = new THREE.Mesh(shaded(skin, skinTint), new THREE.MeshBasicMaterial({
+    vertexColors: true, transparent: true, side: THREE.DoubleSide,
+    depthWrite: false, blending: glow }));
+  const rays = new THREE.LineSegments(shaded(edge, edgeTint), new THREE.LineBasicMaterial({
+    vertexColors: true, transparent: true, depthWrite: false }));
+  const wave = new THREE.Mesh(new THREE.PlaneGeometry(1, PLATE_H * 0.94),
+    new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, blending: glow }));
 
-    if (kind === "ctx") {
-      for (let k = at; k < stop; k += 1) out.push(place(lines[k], k, row + (k - at), 0, 0.5));
-      row += stop - at;
-      at = stop;
-      continue;
-    }
+  const group = new THREE.Group();
+  group.add(hull, rays, wave);
+  page.add(group);
+  return { group, hull, rays, wave, arc: arcOf(older, newer) };
+}
 
-    // a removal run and the addition run right after it are one replacement
-    let addFrom = -1;
-    let addTo = stop;
-    if (kind === "del") {
-      while (addTo < lines.length && lines[addTo].kind === "add") addTo += 1;
-      if (addTo > stop) addFrom = stop;
-    }
-    const gone = kind === "del" ? stop - at : 0;
-    const fresh = kind === "add" ? stop - at : addFrom === -1 ? 0 : addTo - addFrom;
-    const freshFrom = kind === "add" ? at : addFrom;
+// Light added to a dark ground carries further than ink laid on paper, so the
+// wavefront asks for more of itself where it cannot glow.
+const HULL_ALPHA = 0.055, RAY_ALPHA = 0.42;
+const WAVE_ALPHA = { glow: 0.42, ink: 0.72 };
+const ease = (t) => t * t * (3 - 2 * t);
 
-    const back = SHADES[backFace].dim;
-    const front = SHADES[frontFace].dim;
-    for (let k = 0; k < gone; k += 1) out.push(place(lines[at + k], at + k, row + k, BEHIND, back));
-    for (let k = 0; k < fresh; k += 1) out.push(place(lines[freshFrom + k], freshFrom + k, row + k, INFRONT, front));
-    row += Math.max(gone, fresh, 1);
-    at = addTo;
-  }
-  return out;
+function showSweep(swept, sweep, y, phase) {
+  swept.group.position.y = y;
+  swept.group.visible = sweep.dim > 0.02;
+  swept.hull.material.opacity = HULL_ALPHA * sweep.dim;
+  swept.rays.material.opacity = RAY_ALPHA * sweep.dim;
+
+  // Travel is eased, so the fragment leaves and arrives gently. Fading is not:
+  // easing lingers at both ends, which is exactly where the fade is zero, and
+  // the wavefront would spend most of its cycle invisible and cross in a blink.
+  const t = ease(phase);
+  const width = Math.max(CH * 0.3, sweep.was + (sweep.now - sweep.was) * t);
+  swept.wave.scale.x = width;
+  swept.wave.position.set(sweep.from + width / 2, 0, ZBACK + (ZFRONT - ZBACK) * t);
+  alongArc(swept.wave.material.color, swept.arc, t);
+  const reach = look.sweep.glows ? WAVE_ALPHA.glow : WAVE_ALPHA.ink;
+  swept.wave.material.opacity = reach * sweep.dim * Math.sin(Math.PI * phase) ** 0.5;
 }
 
 /* ---------- the live page: one keyed group per visible line ---------- */
@@ -568,24 +706,29 @@ function makeLine(entry, language) {
   gutter.position.x = -(GUTTER + 1.2) * CH;
   group.add(gutter);
   page.add(group);
-  const held = { group, gutter, code: null, body: null, y: null };
+  const held = { group, code: null, baked: null, y: null };
   refreshCode(held, entry, language);
   return held;
 }
 
+const bakeOf = (entry) =>
+  entry.body + "\u0000" + (entry.span ? entry.span[0] + ":" + entry.span[1] : "");
+
 function refreshCode(held, entry, language) {
-  if (held.body === entry.body) return;
+  const baked = bakeOf(entry);
+  if (held.baked === baked) return;
   if (held.code) {
     held.group.remove(held.code);
     held.code.geometry.dispose();
     held.code.material.forEach((m) => { if (m.map) m.map.dispose(); m.dispose(); });
   }
-  const code = plate(entry.body.length, codeTexture(entry.kind, entry.body, language),
+  const code = plate(entry.body.length,
+    codeTexture(entry.kind, entry.body, language, entry.span),
     look.skin[entry.kind].body);
   code.position.x = entry.indent * CH;
   held.group.add(code);
   held.code = code;
-  held.body = entry.body;
+  held.baked = baked;
 }
 
 function drop(held) {
@@ -633,7 +776,42 @@ function syncPage(doc, language, typing, live_caret) {
     drop(live.get(key));
     live.delete(key);
   });
+  syncSweeps(doc);
 }
+
+const swept = new Map();
+
+// a sweep is glued to the row it belongs to, so it rides the same settling y
+function syncSweeps(doc) {
+  const seen = new Set();
+  const now = performance.now();
+  doc.forEach((entry) => {
+    if (!entry.sweep) return;
+    seen.add(entry.key);
+    const held = swept.get(entry.key) || makeSweep(entry.sweep);
+    swept.set(entry.key, held);
+    showSweep(held, entry.sweep, live.get(entry.key).y,
+      (now / SWEEP_MS + entry.row * STAGGER) % 1);
+  });
+  [...swept.keys()].forEach((key) => {
+    if (seen.has(key)) return;
+    dropSweep(swept.get(key));
+    swept.delete(key);
+  });
+}
+
+function dropSweep(held) {
+  page.remove(held.group);
+  [held.hull, held.rays, held.wave].forEach((part) => {
+    part.geometry.dispose();
+    part.material.dispose();
+  });
+}
+
+const clearSweeps = () => {
+  [...swept.values()].forEach(dropSweep);
+  swept.clear();
+};
 
 /* ---------- transport ---------- */
 const CONTEXTS = [0, 3, 8, 20, 60];
@@ -777,6 +955,7 @@ function wear(index) {
   caret.material.color.setHex(look.caret);
   [...live.values()].forEach(drop);
   live.clear();
+  clearSweeps();
   button("theme").textContent = theme.name;
   try { localStorage.setItem(THEME_KEY, theme.name); } catch (e) {}
 }
@@ -839,6 +1018,7 @@ function goto(index) {
   setSpeed(speed > 0 ? 1 : 0);
   [...live.values()].forEach(drop);
   live.clear();
+  clearSweeps();
   refit();
   if (overlay) follow = false;
   caretRow = 0;
