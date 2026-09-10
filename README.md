@@ -14,7 +14,7 @@ some order that made sense to them. `gitdiff3d` plays it back: your diff becomes
 a 3d scene where every changed line is a plate floating in space, and a caret
 walks through them typing the additions in and erasing the deletions.
 
-![the run of characters that changed lit on both planes, a projection joining them across the depth, as the camera orbits and pushes in](docs/overlay.gif)
+![the run of characters that changed lit on both planes, with a wavefront crossing the projection between them from the old text to the new, as the camera orbits and pushes in](docs/overlay.gif)
 
 ## Install
 
