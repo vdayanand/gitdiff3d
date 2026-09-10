@@ -186,7 +186,7 @@ function lookOf(theme) {
     },
     mark: { add: mix(theme.bg, theme.add, 0.34), del: mix(theme.bg, theme.del, 0.34) },
     sweep: { older: theme.del, newer: theme.add, ground: theme.bg,
-      glows: luma(theme.bg) < 0.5 },
+      glows: luma(theme.bg) < 0.5, flush: asInt(theme.add) },
     gutter: { paper: mix(theme.bg, theme.fg, 0.02), number: theme.dim,
       add: theme.add, del: theme.del },
     caret: asInt(theme.accent),
@@ -276,6 +276,8 @@ const gutterTexture = (kind, number) =>
     g.fillStyle = look.gutter.number;
     g.fillText(String(number === null ? "" : number).padStart(4), 1.6 * ADVANCE, c.height / 2);
   });
+
+const FACE = 4; // the side of a plate the reader is on, the one carrying the text
 
 function plate(chars, texture, body) {
   const width = Math.max(0.4, chars * CH);
@@ -689,6 +691,28 @@ function showSweep(swept, sweep, y, phase) {
   swept.wave.material.opacity = reach * sweep.dim * Math.sin(Math.PI * phase) ** 0.5;
 }
 
+/* A crossing that ends in nothing is a crossing you doubt. The far plate takes
+   the hit: the line the fragment arrived at flares as the wavefront touches it
+   and rings down over the next few tenths, so the eye is told where the journey
+   went. The flare is the same trade as the wavefront's - brighter than white on
+   a ground that carries light, flushed with the colour of an addition on paper.
+   It lives on the plate's own face, so head on it is still hidden by the plate
+   in front and the flat read costs nothing. */
+const TOUCH = 0.94, RING = 0.12, BURN = 2.4;
+
+const flareAt = (phase) => phase >= TOUCH
+  ? (phase - TOUCH) / (1 - TOUCH)
+  : Math.exp(-phase / RING);
+
+const PLAIN = new THREE.Color(1, 1, 1);
+const struck = new THREE.Color();
+
+function flare(line, force) {
+  if (look.sweep.glows) struck.setScalar(BURN);
+  else struck.setHex(look.sweep.flush);
+  line.code.material[FACE].color.copy(PLAIN).lerp(struck, force);
+}
+
 /* ---------- the live page: one keyed group per visible line ---------- */
 const live = new Map();
 const page = new THREE.Group();
@@ -790,13 +814,13 @@ function syncSweeps(doc) {
     seen.add(entry.key);
     const held = swept.get(entry.key) || makeSweep(entry.sweep);
     swept.set(entry.key, held);
-    showSweep(held, entry.sweep, live.get(entry.key).y,
-      (now / SWEEP_MS + entry.row * STAGGER) % 1);
+    const phase = (now / SWEEP_MS + entry.row * STAGGER) % 1;
+    const line = live.get(entry.key);
+    showSweep(held, entry.sweep, line.y, phase);
+    flare(line, entry.sweep.dim * flareAt(phase));
   });
   [...swept.keys()].forEach((key) => {
-    if (seen.has(key)) return;
-    dropSweep(swept.get(key));
-    swept.delete(key);
+    if (!seen.has(key)) forget(key);
   });
 }
 
@@ -808,10 +832,15 @@ function dropSweep(held) {
   });
 }
 
-const clearSweeps = () => {
-  [...swept.values()].forEach(dropSweep);
-  swept.clear();
-};
+// a sweep leaves its line lit, so letting one go has to put the line back
+function forget(key) {
+  dropSweep(swept.get(key));
+  swept.delete(key);
+  const line = live.get(key);
+  if (line) flare(line, 0);
+}
+
+const clearSweeps = () => [...swept.keys()].forEach(forget);
 
 /* ---------- transport ---------- */
 const CONTEXTS = [0, 3, 8, 20, 60];
