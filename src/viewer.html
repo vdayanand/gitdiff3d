@@ -83,6 +83,7 @@
   <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>m</b> sound &middot; <b>v</b> voice &middot; <b>f</b> full &middot; <b>a</b> autoplay<br>
   <b>wheel</b> or <b>j</b>/<b>k</b> scroll &middot; <b>ctrl-wheel</b> or <b>+</b>/<b>&minus;</b> zoom &middot;
   <b>shift-wheel</b> sideways &middot; <b>0</b> refit and follow &middot; <b>c</b> context &middot; <b>l</b> overlay &middot; <b>g</b>/<b>G</b> front/back &middot;
+  <b>s</b> or <b>double-click</b> side by side &middot;
   <b>t</b> theme &middot; <b>drag</b> orbit &middot; <b>?</b> hide this<br>
   every change is typed out: <span class="del">removals erase</span>,
   <span class="add">additions type in</span>
@@ -103,6 +104,7 @@
     <button data-act="overlay" title="both versions at once, removals behind (l)">overlay</button>
     <button data-act="front" title="how solid the additions in front are (g)">front solid</button>
     <button data-act="behind" title="how solid the removals behind are (G)">back solid</button>
+    <button data-act="aside" title="removals in a column of their own, double-click one row for just that row (s)">side by side</button>
     <button data-act="ctx" title="lines of context around each change (c)">ctx 3</button>
     <button data-act="theme" title="colour theme (t, shift-t back)">tokyo night</button>
     <button data-act="fit" title="back to fit (0)">fit</button>
@@ -545,6 +547,47 @@ const bodySpan = (span, indent) => {
   return [from, Math.max(from, span[1] - indent)];
 };
 
+/* A row read in depth is one line; a row read side by side is two. Peeling a
+   row sets its removal down in a column of its own, left of the widest line the
+   hunk has, so peeling several lines them up in two columns instead of stepping
+   each one away by its own width. */
+const peeled = new Set();
+const COLUMN_GAP = 4 * CH;
+const asideColumn = () => -(framing.width + COLUMN_GAP);
+
+const pairedRow = (row) =>
+  row.before !== null && row.after !== null && row.before !== row.after;
+
+function peel(row) {
+  if (!pairedRow(hunk.rows[row])) return; // nothing to set beside
+  if (peeled.has(row)) peeled.delete(row);
+  else peeled.add(row);
+  syncAsideBtn();
+}
+
+/* A double click asks about one row, so it has to hit a plate: the ray says
+   which, and a miss says nothing rather than guessing at the nearest. */
+const ray = new THREE.Raycaster();
+const aim = new THREE.Vector2();
+
+function rowUnder(event) {
+  const box = renderer.domElement.getBoundingClientRect();
+  aim.set(((event.clientX - box.left) / box.width) * 2 - 1,
+    -((event.clientY - box.top) / box.height) * 2 + 1);
+  ray.setFromCamera(aim, camera);
+  for (const hit of ray.intersectObjects(page.children, true)) {
+    const row = hit.object.parent.userData.row;
+    if (row !== undefined) return row;
+  }
+  return null;
+}
+
+renderer.domElement.addEventListener("dblclick", (event) => {
+  if (!overlay) return;
+  const row = rowUnder(event);
+  if (row !== null) peel(row);
+});
+
 function overlayDoc(hunk) {
   const lines = hunk.lines;
   const front = SHADES[frontFace].dim;
@@ -552,7 +595,7 @@ function overlayDoc(hunk) {
   const out = [];
 
   hunk.rows.forEach((row, at) => {
-    const seat = { row: at, caret: null, z: 0, span: null };
+    const seat = { row: at, caret: null, x: 0, z: 0, span: null };
 
     if (row.before === row.after) {
       const line = lines[row.after];
@@ -571,6 +614,7 @@ function overlayDoc(hunk) {
       out.push({ ...seat, key: "a" + row.after, kind: "add", indent,
         body: bodyOf(line.text), number: line.newNo, z: INFRONT, dim: front,
         span: row.span === null ? null : bodySpan(row.span.after, indent),
+        mate: row.before === null ? null : "d" + row.before,
         sweep: replaced ? sweepFor(row.span, Math.min(front, back)) : null });
     }
 
@@ -579,6 +623,7 @@ function overlayDoc(hunk) {
     const behind = indentOf(line.text);
     out.push({ ...seat, key: "d" + row.before, kind: "del", indent: behind,
       body: bodyOf(line.text), number: line.oldNo, z: BEHIND, dim: back,
+      x: peeled.has(at) ? asideColumn() : 0,
       span: row.span === null ? null : bodySpan(row.span.before, behind) });
   });
   return out;
@@ -632,19 +677,23 @@ const STATIONS = [0, 0.5, 1];
 const DIP = 0.22;
 const RIM = [-PLATE_H / 2, PLATE_H / 2]; // the two edges the reader looks along
 
-function makeSweep(sweep) {
+/* Peeling a row moves the far end of the beam and leaves the near end where the
+   replacement is: a shear, which no amount of moving the group can express, so
+   the stations are laid out again from wherever the removal has slid to. */
+function sweepArrays(sweep, aside) {
   const older = new THREE.Color(look.sweep.older);
   const newer = new THREE.Color(look.sweep.newer);
   const ground = new THREE.Color(look.sweep.ground);
   const stations = STATIONS.map((t) => ({
     z: ZBACK + (ZFRONT - ZBACK) * t,
+    from: sweep.from + aside * (1 - t),
     width: sweep.was + (sweep.now - sweep.was) * t,
     tint: older.clone().lerp(newer, t).lerp(ground, t > 0 && t < 1 ? 1 - DIP : 0),
   }));
 
   const skin = [], skinTint = [], edge = [], edgeTint = [];
   const put = (into, tint, station, side, y) => {
-    into.push(sweep.from + side * station.width, y, station.z);
+    into.push(station.from + side * station.width, y, station.z);
     tint.push(station.tint.r, station.tint.g, station.tint.b);
   };
 
@@ -660,6 +709,11 @@ function makeSweep(sweep) {
     });
   });
 
+  return { skin, skinTint, edge, edgeTint };
+}
+
+function makeSweep(sweep) {
+  const { skin, skinTint, edge, edgeTint } = sweepArrays(sweep, 0);
   const glow = look.sweep.glows ? THREE.AdditiveBlending : THREE.NormalBlending;
   const hull = new THREE.Mesh(shaded(skin, skinTint), new THREE.MeshBasicMaterial({
     vertexColors: true, transparent: true, side: THREE.DoubleSide,
@@ -672,7 +726,19 @@ function makeSweep(sweep) {
   const group = new THREE.Group();
   group.add(hull, rays, wave);
   page.add(group);
-  return { group, hull, rays, wave, arc: arcOf(older, newer) };
+  return { group, hull, rays, wave, aside: 0,
+    arc: arcOf(new THREE.Color(look.sweep.older), new THREE.Color(look.sweep.newer)) };
+}
+
+// the far end rides with the plate, so the beam is re-laid while a row slides
+function bend(held, sweep, aside) {
+  if (Math.abs(held.aside - aside) < 1e-3) return;
+  const { skin, edge } = sweepArrays(sweep, aside);
+  [[held.hull, skin], [held.rays, edge]].forEach(([part, values]) => {
+    part.geometry.attributes.position.array.set(values);
+    part.geometry.attributes.position.needsUpdate = true;
+  });
+  held.aside = aside;
 }
 
 // Light added to a dark ground carries further than ink laid on paper, so the
@@ -693,7 +759,8 @@ function showSweep(swept, sweep, y, phase) {
   const t = ease(phase);
   const width = Math.max(CH * 0.3, sweep.was + (sweep.now - sweep.was) * t);
   swept.wave.scale.x = width;
-  swept.wave.position.set(sweep.from + width / 2, 0, ZBACK + (ZFRONT - ZBACK) * t);
+  swept.wave.position.set(sweep.from + swept.aside * (1 - t) + width / 2, 0,
+    ZBACK + (ZFRONT - ZBACK) * t);
   alongArc(swept.wave.material.color, swept.arc, t);
   const reach = look.sweep.glows ? WAVE_ALPHA.glow : WAVE_ALPHA.ink;
   swept.wave.material.opacity = reach * sweep.dim * Math.sin(Math.PI * phase) ** 0.5;
@@ -738,7 +805,7 @@ function makeLine(entry, language) {
   gutter.position.x = -(GUTTER + 1.2) * CH;
   group.add(gutter);
   page.add(group);
-  const held = { group, code: null, baked: null, y: null };
+  const held = { group, code: null, baked: null, x: null, y: null };
   refreshCode(held, entry, language);
   return held;
 }
@@ -793,7 +860,9 @@ function syncPage(doc, language, typing, live_caret) {
     refreshCode(held, entry, language);
     const target = -(entry.row === undefined ? index : entry.row) * ROW;
     held.y = held.y === null ? target : held.y + (target - held.y) * 0.28;
-    held.group.position.set(0, held.y, entry.z || 0);
+    held.x = held.x === null ? entry.x || 0 : held.x + ((entry.x || 0) - held.x) * 0.28;
+    held.group.userData.row = entry.row;
+    held.group.position.set(held.x, held.y, entry.z || 0);
     setOpacity(held, entry.dim === undefined ? 1 : entry.dim);
     if (entry.caret !== null) {
       caret.position.set((entry.indent + entry.caret) * CH + CH * 0.1, held.y, THICK);
@@ -824,6 +893,8 @@ function syncSweeps(doc) {
     swept.set(entry.key, held);
     const phase = (now / SWEEP_MS + entry.row * STAGGER) % 1;
     const line = live.get(entry.key);
+    const mate = live.get(entry.mate);
+    bend(held, entry.sweep, mate ? mate.x : 0);
     showSweep(held, entry.sweep, line.y, phase);
     flare(line, entry.sweep.dim * flareAt(phase));
   });
@@ -908,6 +979,7 @@ const ACTIONS = {
     button("overlay").classList.toggle("live", overlay);
     button("overlay").textContent = overlay ? "typing" : "overlay";
     syncPlaneBtns();
+    syncAsideBtn();
     goto(at);
   },
   front: () => {
@@ -919,6 +991,12 @@ const ACTIONS = {
     if (!overlay) return;
     backFace = (backFace + 1) % SHADES.length;
     syncPlaneBtns();
+  },
+  aside: () => {
+    if (!overlay) return;
+    if (peeled.size) peeled.clear();
+    else hunk.rows.forEach((row, at) => { if (pairedRow(row)) peeled.add(at); });
+    syncAsideBtn();
   },
   ctx: () => {
     if (fetching !== null) return; // one reload at a time
@@ -956,6 +1034,13 @@ function syncPlaneBtns() {
     button(act).disabled = !overlay;
     button(act).classList.toggle("live", overlay && face !== 0);
   });
+}
+
+/* one button for both directions: it names what clicking it gives you */
+function syncAsideBtn() {
+  button("aside").textContent = peeled.size ? "stacked" : "side by side";
+  button("aside").disabled = !overlay;
+  button("aside").classList.toggle("live", overlay && peeled.size > 0);
 }
 
 function syncCtxBtn() {
@@ -1066,6 +1151,8 @@ function goto(index) {
   [...live.values()].forEach(drop);
   live.clear();
   clearSweeps();
+  peeled.clear();
+  syncAsideBtn();
   refit();
   if (overlay) follow = false;
   caretRow = 0;
@@ -1141,6 +1228,7 @@ addEventListener("keydown", (e) => {
   else if (e.key === "l") ACTIONS.overlay();
   else if (e.key === "g") ACTIONS.front();
   else if (e.key === "G") ACTIONS.behind();
+  else if (e.key === "s") ACTIONS.aside();
   else if (e.key === "j") scrollRows(3);
   else if (e.key === "k") scrollRows(-3);
   else if (e.key === "PageDown") { e.preventDefault(); scrollRows(WINDOW - 2); }
@@ -1210,8 +1298,10 @@ function frame(now) {
   if (follow) viewRow += (anchor - viewRow) * 0.12;
   else viewRow = Math.min(Math.max(viewRow, 0), Math.max(0, spread - 1));
 
-  const fit = Math.max(framing.width * 0.98, rows * ROW * 1.34) + 6;
-  goal.target.set(framing.centre + panX, -viewRow * ROW, 0);
+  // a peel spends the width of one more column, so the frame has to hold it
+  const widened = peeled.size ? -asideColumn() : 0;
+  const fit = Math.max((framing.width + widened) * 0.98, rows * ROW * 1.34) + 6;
+  goal.target.set(framing.centre - widened / 2 + panX, -viewRow * ROW, 0);
   goal.radius = fit * zoom;
   orbit.radius += (goal.radius - orbit.radius) * 0.08;
   orbit.target.lerp(goal.target, 0.1);
