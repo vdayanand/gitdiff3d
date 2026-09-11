@@ -195,11 +195,19 @@ function lookOf(theme) {
 }
 
 const THEME_KEY = "gitdiff3d-theme";
-let themeAt = 0;
-try {
-  const saved = THEMES.findIndex((theme) => theme.name === localStorage.getItem(THEME_KEY));
-  if (saved !== -1) themeAt = saved;
-} catch (e) {}
+const SYSTEM_THEME = { dark: "tokyo night", light: "github light" };
+const themeNamed = (name) => THEMES.findIndex((theme) => theme.name === name);
+
+/* Until you pick one with t, the player wears whichever scheme the system asks for. */
+const DARK_SCHEME = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+function chosenTheme() {
+  try { return themeNamed(localStorage.getItem(THEME_KEY)); } catch (e) { return -1; }
+}
+function systemTheme() {
+  return themeNamed(!DARK_SCHEME || DARK_SCHEME.matches ? SYSTEM_THEME.dark : SYSTEM_THEME.light);
+}
+
+let themeAt = chosenTheme() === -1 ? systemTheme() : chosenTheme();
 let look = lookOf(THEMES[themeAt]);
 
 const KEYWORD = /^(?:const|let|var|function|func|fn|def|class|struct|interface|type|enum|impl|trait|module|end|return|if|elif|else|elseif|for|while|do|then|switch|case|break|continue|new|delete|await|async|import|export|from|use|package|public|private|protected|static|throw|try|catch|finally|yield|lambda|match|where|with|as|in|of|not|and|or|is|null|nil|None|True|False|true|false|this|self|super|pub|mut)$/;
@@ -917,7 +925,7 @@ const ACTIONS = {
     const step = CONTEXTS.indexOf(sceneContext);
     loadScene(CONTEXTS[(step + 1) % CONTEXTS.length]);
   },
-  theme: (back) => wear(themeAt + (back ? -1 : 1)),
+  theme: (back) => pick(themeAt + (back ? -1 : 1)),
   full: () => {
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen().catch(() => {});
@@ -986,9 +994,19 @@ function wear(index) {
   live.clear();
   clearSweeps();
   button("theme").textContent = theme.name;
-  try { localStorage.setItem(THEME_KEY, theme.name); } catch (e) {}
+}
+
+/* Wearing a theme is a look; picking one is a choice, and only a choice outlives the tab. */
+function pick(index) {
+  wear(index);
+  try { localStorage.setItem(THEME_KEY, THEMES[themeAt].name); } catch (e) {}
 }
 wear(themeAt);
+if (DARK_SCHEME) {
+  DARK_SCHEME.addEventListener("change", () => {
+    if (chosenTheme() === -1) wear(systemTheme());
+  });
+}
 
 function syncFullBtn() {
   const wide = document.fullscreenElement !== null;
