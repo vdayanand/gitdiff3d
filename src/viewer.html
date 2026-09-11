@@ -393,9 +393,14 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 400);
 
-const orbit = { theta: Math.PI / 2 - 0.4, phi: Math.PI / 2 - 0.15, radius: 26,
+const HEADON = Math.PI / 2; // square on to the plates, where a column reads flat
+const orbit = { theta: HEADON - 0.4, phi: HEADON - 0.15, radius: 26,
   target: new THREE.Vector3() };
-const goal = { radius: 26, target: new THREE.Vector3() };
+const goal = { theta: orbit.theta, phi: orbit.phi, radius: 26,
+  target: new THREE.Vector3() };
+
+// dragging can wind theta past a turn, and the camera should not unwind it
+const nearest = (from, to) => to + Math.round((from - to) / (2 * Math.PI)) * 2 * Math.PI;
 
 /* The camera keeps a readable window rather than fitting the whole hunk, and
    follows the caret through it. Scrolling detaches the follow, like a log tail;
@@ -441,6 +446,8 @@ addEventListener("pointermove", (e) => {
   } else {
     orbit.theta -= dx * 0.005;
     orbit.phi = Math.min(Math.PI - 0.12, Math.max(0.12, orbit.phi - dy * 0.005));
+    goal.theta = orbit.theta; // the hand wins over whatever the camera was easing to
+    goal.phi = orbit.phi;
   }
   drag = { x: e.clientX, y: e.clientY, pan: drag.pan };
 });
@@ -961,6 +968,7 @@ const ACTIONS = {
   aside: () => {
     if (!overlay) return;
     apart = !apart;
+    if (apart) squareOn();
     syncAsideBtn();
   },
   ctx: () => {
@@ -999,6 +1007,18 @@ function syncPlaneBtns() {
     button(act).disabled = !overlay;
     button(act).classList.toggle("live", overlay && face !== 0);
   });
+}
+
+/* The tilt is there to show depth. Standing the versions apart says the reader
+   is done with depth and wants two columns, so the camera swings square on and
+   the frame goes back to fit, where both columns are in view. Stacking them
+   again leaves the camera alone: by then the angle is the reader's own. */
+function squareOn() {
+  goal.theta = nearest(orbit.theta, HEADON);
+  goal.phi = nearest(orbit.phi, HEADON);
+  zoom = 1;
+  panX = 0;
+  syncFitBtn();
 }
 
 /* one button for both directions: it names what clicking it gives you */
@@ -1269,6 +1289,8 @@ function frame(now) {
   goal.target.set(framing.centre - widened / 2 + panX, -viewRow * ROW, 0);
   goal.radius = fit * zoom;
   orbit.radius += (goal.radius - orbit.radius) * 0.08;
+  orbit.theta += (goal.theta - orbit.theta) * 0.08;
+  orbit.phi += (goal.phi - orbit.phi) * 0.08;
   orbit.target.lerp(goal.target, 0.1);
   camera.position.set(
     orbit.target.x + orbit.radius * Math.sin(orbit.phi) * Math.cos(orbit.theta),
