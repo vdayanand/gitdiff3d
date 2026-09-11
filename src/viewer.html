@@ -83,7 +83,7 @@
   <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>m</b> sound &middot; <b>v</b> voice &middot; <b>f</b> full &middot; <b>a</b> autoplay<br>
   <b>wheel</b> or <b>j</b>/<b>k</b> scroll &middot; <b>ctrl-wheel</b> or <b>+</b>/<b>&minus;</b> zoom &middot;
   <b>shift-wheel</b> sideways &middot; <b>0</b> refit and follow &middot; <b>c</b> context &middot; <b>l</b> overlay &middot; <b>g</b>/<b>G</b> front/back &middot;
-  <b>s</b> or <b>double-click</b> side by side &middot;
+  <b>s</b> side by side &middot;
   <b>t</b> theme &middot; <b>drag</b> orbit &middot; <b>?</b> hide this<br>
   every change is typed out: <span class="del">removals erase</span>,
   <span class="add">additions type in</span>
@@ -104,7 +104,7 @@
     <button data-act="overlay" title="both versions at once, removals behind (l)">overlay</button>
     <button data-act="front" title="how solid the additions in front are (g)">front solid</button>
     <button data-act="behind" title="how solid the removals behind are (G)">back solid</button>
-    <button data-act="aside" title="removals in a column of their own, double-click one row for just that row (s)">side by side</button>
+    <button data-act="aside" title="removals in a column of their own (s)">side by side</button>
     <button data-act="ctx" title="lines of context around each change (c)">ctx 3</button>
     <button data-act="theme" title="colour theme (t, shift-t back)">tokyo night</button>
     <button data-act="fit" title="back to fit (0)">fit</button>
@@ -547,46 +547,13 @@ const bodySpan = (span, indent) => {
   return [from, Math.max(from, span[1] - indent)];
 };
 
-/* A row read in depth is one line; a row read side by side is two. Peeling a
-   row sets its removal down in a column of its own, left of the widest line the
-   hunk has, so peeling several lines them up in two columns instead of stepping
-   each one away by its own width. */
-const peeled = new Set();
+/* Read in depth a row is one line, with what it replaced hidden behind it; read
+   side by side it is two. Standing them apart sets every removal down in a
+   column of its own, left of the widest line the hunk has, so the removals line
+   up in one column rather than each stepping away by its own width. */
+let apart = false;
 const COLUMN_GAP = 4 * CH;
 const asideColumn = () => -(framing.width + COLUMN_GAP);
-
-const pairedRow = (row) =>
-  row.before !== null && row.after !== null && row.before !== row.after;
-
-function peel(row) {
-  if (!pairedRow(hunk.rows[row])) return; // nothing to set beside
-  if (peeled.has(row)) peeled.delete(row);
-  else peeled.add(row);
-  syncAsideBtn();
-}
-
-/* A double click asks about one row, so it has to hit a plate: the ray says
-   which, and a miss says nothing rather than guessing at the nearest. */
-const ray = new THREE.Raycaster();
-const aim = new THREE.Vector2();
-
-function rowUnder(event) {
-  const box = renderer.domElement.getBoundingClientRect();
-  aim.set(((event.clientX - box.left) / box.width) * 2 - 1,
-    -((event.clientY - box.top) / box.height) * 2 + 1);
-  ray.setFromCamera(aim, camera);
-  for (const hit of ray.intersectObjects(page.children, true)) {
-    const row = hit.object.parent.userData.row;
-    if (row !== undefined) return row;
-  }
-  return null;
-}
-
-renderer.domElement.addEventListener("dblclick", (event) => {
-  if (!overlay) return;
-  const row = rowUnder(event);
-  if (row !== null) peel(row);
-});
 
 function overlayDoc(hunk) {
   const lines = hunk.lines;
@@ -623,7 +590,7 @@ function overlayDoc(hunk) {
     const behind = indentOf(line.text);
     out.push({ ...seat, key: "d" + row.before, kind: "del", indent: behind,
       body: bodyOf(line.text), number: line.oldNo, z: BEHIND, dim: back,
-      x: peeled.has(at) ? asideColumn() : 0,
+      x: apart ? asideColumn() : 0,
       span: row.span === null ? null : bodySpan(row.span.before, behind) });
   });
   return out;
@@ -861,7 +828,6 @@ function syncPage(doc, language, typing, live_caret) {
     const target = -(entry.row === undefined ? index : entry.row) * ROW;
     held.y = held.y === null ? target : held.y + (target - held.y) * 0.28;
     held.x = held.x === null ? entry.x || 0 : held.x + ((entry.x || 0) - held.x) * 0.28;
-    held.group.userData.row = entry.row;
     held.group.position.set(held.x, held.y, entry.z || 0);
     setOpacity(held, entry.dim === undefined ? 1 : entry.dim);
     if (entry.caret !== null) {
@@ -994,8 +960,7 @@ const ACTIONS = {
   },
   aside: () => {
     if (!overlay) return;
-    if (peeled.size) peeled.clear();
-    else hunk.rows.forEach((row, at) => { if (pairedRow(row)) peeled.add(at); });
+    apart = !apart;
     syncAsideBtn();
   },
   ctx: () => {
@@ -1038,9 +1003,9 @@ function syncPlaneBtns() {
 
 /* one button for both directions: it names what clicking it gives you */
 function syncAsideBtn() {
-  button("aside").textContent = peeled.size ? "stacked" : "side by side";
+  button("aside").textContent = apart ? "stacked" : "side by side";
   button("aside").disabled = !overlay;
-  button("aside").classList.toggle("live", overlay && peeled.size > 0);
+  button("aside").classList.toggle("live", overlay && apart);
 }
 
 function syncCtxBtn() {
@@ -1151,7 +1116,7 @@ function goto(index) {
   [...live.values()].forEach(drop);
   live.clear();
   clearSweeps();
-  peeled.clear();
+  apart = false;
   syncAsideBtn();
   refit();
   if (overlay) follow = false;
@@ -1299,7 +1264,7 @@ function frame(now) {
   else viewRow = Math.min(Math.max(viewRow, 0), Math.max(0, spread - 1));
 
   // a peel spends the width of one more column, so the frame has to hold it
-  const widened = peeled.size ? -asideColumn() : 0;
+  const widened = apart ? -asideColumn() : 0;
   const fit = Math.max((framing.width + widened) * 0.98, rows * ROW * 1.34) + 6;
   goal.target.set(framing.centre - widened / 2 + panX, -viewRow * ROW, 0);
   goal.radius = fit * zoom;
