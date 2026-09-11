@@ -537,6 +537,10 @@ function documentAt(hunk, timeline, t) {
    line you have already read, so what shows through is the change itself. */
 const BEHIND = -2.4, INFRONT = 2.4;
 
+/* Context places the change; it is not competing with it. Half strength dropped
+   it out of the page altogether, so it is whispered rather than silenced. */
+const CONTEXT = 0.72;
+
 /* Each plane can be solid, faded, or gone, independently: fade the front to read
    what a change replaced, drop the back to see the result on its own. */
 const SHADES = [
@@ -574,7 +578,7 @@ function overlayDoc(hunk) {
     if (row.before === row.after) {
       const line = lines[row.after];
       out.push({ ...seat, key: "c" + row.after, kind: "ctx", indent: indentOf(line.text),
-        body: bodyOf(line.text), number: line.newNo, dim: 0.5 });
+        body: bodyOf(line.text), number: line.newNo, dim: CONTEXT });
       return;
     }
 
