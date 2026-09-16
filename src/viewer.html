@@ -98,7 +98,7 @@
     <button data-act="forward" title="one keystroke on, shift-click for a whole line">fwd</button>
     <button data-act="rate">1x</button>
     <button data-act="sound" title="typing sounds">sound</button>
-    <button data-act="voice" title="read the note aloud (v)">voice</button>
+    <button data-act="voice" title="narrate what changed and why (v)">voice</button>
     <button data-act="zoomIn" title="zoom in (=)">+</button>
     <button data-act="zoomOut" title="zoom out (-)">&minus;</button>
     <button data-act="overlay" title="both versions at once, removals behind (l)">overlay</button>
@@ -938,7 +938,7 @@ const ACTIONS = {
   voice: () => {
     voiceOn = !voiceOn;
     if (!voiceOn) hush();
-    else tellNote();
+    else narrate();
     syncVoiceBtn();
   },
   back: (coarse) => seek(-1, coarse),
@@ -1095,7 +1095,9 @@ transport.querySelectorAll("button").forEach((element) => {
 
 /* ---------- narration ----------
    A scene may arrive with a note per hunk (why the change exists) and a group
-   label. gitdiff3d never writes these; a host such as gtweb fills them in. */
+   label; gitdiff3d never writes these, a host such as gtweb fills them in. The
+   what is ours either way: the diff already knows the file, the symbol and the
+   size of the edit, so the voice always has something true to say. */
 const VOICE_KEY = "gitdiff3d-voice";
 let voiceOn = true;
 try { voiceOn = localStorage.getItem(VOICE_KEY) !== "0"; } catch (e) {}
@@ -1103,13 +1105,59 @@ try { voiceOn = localStorage.getItem(VOICE_KEY) !== "0"; } catch (e) {}
 const canSpeak = () => typeof speechSynthesis !== "undefined";
 const hush = () => { if (canSpeak()) speechSynthesis.cancel(); };
 
-function say(text) {
-  if (!voiceOn || !text || !canSpeak()) return;
-  speechSynthesis.cancel();
-  const line = new SpeechSynthesisUtterance(text);
-  line.rate = 1.06;
-  speechSynthesis.speak(line);
+const baseName = (path) => path.split("/").pop();
+const lineCount = (n) => n + (n === 1 ? " line" : " lines");
+
+function whatChanged() {
+  const where = hunk.symbol
+    ? hunk.symbol + ", in " + baseName(data.files[hunk.file].path)
+    : baseName(data.files[hunk.file].path);
+  if (hunk.comment) return "Comments only: " + where + ".";
+  if (!hunk.deletions) return where + " gains " + lineCount(hunk.additions) + ".";
+  if (!hunk.additions) return where + " loses " + lineCount(hunk.deletions) + ".";
+  return where + " trades " + lineCount(hunk.deletions) + " for " + hunk.additions + ".";
 }
+
+/* A flat machine reading a list is tiring, so each phrase gets its own pace and
+   pitch: the label announces, the what reports, the why slows down and drops. */
+const TONE = {
+  group: { rate: 1.0, pitch: 1.14 },
+  what: { rate: 1.06, pitch: 1.0 },
+  why: { rate: 0.94, pitch: 0.9 },
+};
+
+/* Voices differ wildly by machine; the named ones are the ones that sound like
+   a person rather than a station announcement. */
+const WARM = [/natural/i, /premium/i, /enhanced/i, /samantha/i, /serena/i, /allison/i, /ava/i,
+  /google uk english female/i, /google us english/i];
+
+const warmVoice = () => {
+  const english = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang));
+  return WARM.reduce((found, wish) => found || english.find((v) => wish.test(v.name)), null)
+    || english[0] || null;
+};
+
+const sway = () => 0.96 + Math.random() * 0.08;
+
+function say(phrases) {
+  if (!voiceOn || !canSpeak()) return;
+  speechSynthesis.cancel();
+  const voice = warmVoice();
+  phrases.filter(Boolean).forEach(({ text, tone }) => {
+    const line = new SpeechSynthesisUtterance(text);
+    if (voice) line.voice = voice;
+    line.rate = tone.rate * sway();
+    line.pitch = tone.pitch * sway();
+    speechSynthesis.speak(line);
+  });
+}
+
+const narrate = () =>
+  say([
+    hunk.group && { text: hunk.group, tone: TONE.group },
+    { text: whatChanged(), tone: TONE.what },
+    hunk.note && { text: hunk.note, tone: TONE.why },
+  ]);
 
 function syncVoiceBtn() {
   button("voice").textContent = voiceOn ? "voice" : "silent";
@@ -1117,17 +1165,11 @@ function syncVoiceBtn() {
   try { localStorage.setItem(VOICE_KEY, voiceOn ? "1" : "0"); } catch (e) {}
 }
 
-function tellNote() {
+function showNote() {
   const panel = document.getElementById("note");
-  if (!hunk.note && !hunk.group) {
-    panel.style.display = "none";
-    hush();
-    return;
-  }
+  panel.style.display = hunk.note || hunk.group ? "block" : "none";
   panel.querySelector(".group").textContent = hunk.group || "";
   panel.querySelector(".why").textContent = hunk.note || "";
-  panel.style.display = "block";
-  say([hunk.group, hunk.note].filter(Boolean).join(". "));
 }
 
 /* ---------- hunks ---------- */
@@ -1160,7 +1202,8 @@ function describe() {
   const file = data.files[hunk.file];
   document.querySelector("#where .path").innerHTML =
     esc(file.path) + (hunk.symbol ? " <span class='sym'>" + esc(hunk.symbol) + "</span>" : "");
-  tellNote();
+  showNote();
+  narrate();
   document.querySelector("#where .meta").innerHTML =
     "hunk " + hunk.index + " / " + data.hunks.length +
     " &middot; line " + hunk.newStart +

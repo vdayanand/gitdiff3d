@@ -153,7 +153,7 @@ drag   orbit            0  refit the camera and follow the caret
 c      more or less context (refetched from git)
 l      overlay          g / G  fade the front or back plane
 t / T  next or previous theme        f  fullscreen
-x / X  faster or slower m  keystroke sound      v  speak the file and symbol
+x / X  faster or slower m  keystroke sound      v  narrate what and why
 ?      show or hide the shortcuts
 ```
 
