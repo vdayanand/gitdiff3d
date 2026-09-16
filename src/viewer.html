@@ -58,7 +58,7 @@
   @keyframes slide { from { transform:translateX(-105%); } to { transform:translateX(480%); } }
   @keyframes blink { 0%,100% { opacity:1; } 50% { opacity:.45; } }
   #transport button:disabled:hover { color:var(--dim); background:var(--key); }
-  #strip { display:flex; gap:3px; flex:1 1 220px; min-height:26px; }
+  #strip { display:flex; gap:3px; flex:1 1 220px; min-height:26px; touch-action:none; }
   #strip .seg { position:relative; flex:1 1 0; min-width:6px; border-radius:4px;
     background:var(--key); cursor:pointer; overflow:hidden; transition:background .15s; }
   #strip .seg:hover { background:var(--keyOn); }
@@ -83,7 +83,7 @@
   <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>m</b> sound &middot; <b>v</b> voice &middot; <b>f</b> full &middot; <b>a</b> autoplay<br>
   <b>wheel</b> or <b>j</b>/<b>k</b> scroll &middot; <b>ctrl-wheel</b> or <b>+</b>/<b>&minus;</b> zoom &middot;
   <b>shift-wheel</b> sideways &middot; <b>0</b> refit and follow &middot; <b>c</b> context &middot; <b>l</b> overlay &middot; <b>g</b>/<b>G</b> front/back &middot;
-  <b>s</b> side by side &middot;
+  <b>s</b> side by side &middot; <b>drag the strip</b> to scrub &middot;
   <b>t</b> theme &middot; <b>drag</b> orbit &middot; <b>?</b> hide this<br>
   every change is typed out: <span class="del">removals erase</span>,
   <span class="add">additions type in</span>
@@ -1152,12 +1152,14 @@ function say(phrases) {
   });
 }
 
-const narrate = () =>
+const narrate = () => {
+  if (scrub) return; // a drag crosses many hunks; the one it lands on speaks
   say([
     hunk.group && { text: hunk.group, tone: TONE.group },
     { text: whatChanged(), tone: TONE.what },
     hunk.note && { text: hunk.note, tone: TONE.why },
   ]);
+};
 
 function syncVoiceBtn() {
   button("voice").textContent = voiceOn ? "voice" : "silent";
@@ -1229,10 +1231,57 @@ function buildStrip() {
     const edge = document.createElement("i");
     edge.className = entry.additions >= entry.deletions ? "add" : "del";
     seg.append(bar, edge);
-    seg.onclick = () => goto(i);
     strip.appendChild(seg);
   });
 }
+
+/* ---------- scrubbing ----------
+   The strip is one timeline for the whole review: the pointer lands on a
+   segment and a fraction inside it, so any keystroke of any hunk is one gesture
+   away. Playing and speaking wait for the pointer to lift, and the keystroke
+   sound is marked as already heard, or a forward drag would fire every click
+   between here and there at once. */
+let scrub = null;
+
+const boxOf = (seg) => seg.getBoundingClientRect();
+
+function pointAt(x) {
+  const segs = [...strip.children];
+  const found = segs.findIndex((seg) => x < boxOf(seg).right);
+  const index = found < 0 ? segs.length - 1 : found;
+  const box = boxOf(segs[index]);
+  return { index, fraction: Math.min(1, Math.max(0, (x - box.left) / box.width)) };
+}
+
+function scrubTo(x) {
+  const { index, fraction } = pointAt(x);
+  if (index !== at) goto(index);
+  clock = fraction * timeline.total;
+  heard = clock;
+}
+
+strip.addEventListener("pointerdown", (e) => {
+  strip.setPointerCapture(e.pointerId);
+  scrub = { playing: speed > 0 };
+  setSpeed(0);
+  hush();
+  scrubTo(e.clientX);
+});
+
+strip.addEventListener("pointermove", (e) => {
+  if (scrub) scrubTo(e.clientX);
+});
+
+const endScrub = () => {
+  if (!scrub) return;
+  const { playing } = scrub;
+  scrub = null;
+  setSpeed(playing ? 1 : 0);
+  narrate();
+};
+
+strip.addEventListener("pointerup", endScrub);
+strip.addEventListener("pointercancel", endScrub);
 
 function resize() {
   camera.aspect = innerWidth / innerHeight;
