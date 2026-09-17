@@ -577,8 +577,14 @@ function overlayDoc(hunk) {
 
     if (row.before === row.after) {
       const line = lines[row.after];
-      out.push({ ...seat, key: "c" + row.after, kind: "ctx", indent: indentOf(line.text),
-        body: bodyOf(line.text), number: line.newNo, dim: CONTEXT });
+      const unchanged = { ...seat, kind: "ctx", indent: indentOf(line.text),
+        body: bodyOf(line.text) };
+      out.push({ ...unchanged, key: "c" + row.after, number: line.newNo, dim: CONTEXT });
+      // the left column is the old file, so the lines it kept stand there too,
+      // numbered as the old file numbered them; stacked in depth they are one
+      // line seen once, and this copy waits silent behind the other
+      out.push({ ...unchanged, key: "o" + row.after, number: line.oldNo, z: BEHIND,
+        x: apart ? asideColumn() : 0, dim: apart ? CONTEXT * back : 0 });
       return;
     }
 
@@ -1099,8 +1105,8 @@ transport.querySelectorAll("button").forEach((element) => {
    what is ours either way: the diff already knows the file, the symbol and the
    size of the edit, so the voice always has something true to say. */
 const VOICE_KEY = "gitdiff3d-voice";
-let voiceOn = true;
-try { voiceOn = localStorage.getItem(VOICE_KEY) !== "0"; } catch (e) {}
+let voiceOn = false;
+try { voiceOn = localStorage.getItem(VOICE_KEY) === "1"; } catch (e) {}
 
 const canSpeak = () => typeof speechSynthesis !== "undefined";
 const hush = () => { if (canSpeak()) speechSynthesis.cancel(); };
