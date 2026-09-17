@@ -100,7 +100,7 @@ async function main() {
   console.log(scene.totals.files + " files, " + scene.totals.shown + " of " +
     scene.totals.hunks + " hunks, +" +
     scene.totals.additions + " -" + scene.totals.deletions + "  ->  " + url);
-  console.log("keys: space pause, , . keystroke, < > line, arrows hunk, l overlay, c context,\n" +
+  console.log("keys: space pause, , . keystroke, < > line, q e hunk, l overlay, w side by side, c context,\n" +
     "      j/k scroll, x/X speed, m sound, v voice, f full, a autoplay, ? help");
   if (flags.open) openBrowser(url);
 }

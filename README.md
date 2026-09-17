@@ -147,12 +147,13 @@ in front and leaves only a tick on the line behind.
 ```
 space  pause            ,  .  a keystroke back or forward
 <  >   a whole line     b  r  rewind this hunk
-arrows previous or next hunk       a  autoplay through everything
+q / e  previous or next hunk       a  autoplay through everything
 j / k  scroll           wheel, ctrl-wheel zoom, shift-wheel sideways
 drag   orbit            0  refit the camera and follow the caret
 drag the filmstrip to scrub to any keystroke of any hunk
 c      more or less context (refetched from git)
 l      overlay          g / G  fade the front or back plane
+w      during overlay, stand the two versions apart or back into depth
 t / T  next or previous theme        f  fullscreen
 x / X  faster or slower m  keystroke sound      v  narrate what and why
 ?      show or hide the shortcuts

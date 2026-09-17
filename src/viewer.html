@@ -80,10 +80,10 @@
   <div id="keysBody">
   <b>space</b> pause &middot; <b>,</b>/<b>.</b> keystroke &middot; <b>&lt;</b>/<b>&gt;</b> whole line &middot;
   <b>b</b>/<b>r</b> rewind &middot;
-  <b>&rarr;</b>/<b>&larr;</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>m</b> sound &middot; <b>v</b> voice &middot; <b>f</b> full &middot; <b>a</b> autoplay<br>
+  <b>q</b>/<b>e</b> hunk &middot; <b>x</b>/<b>X</b> speed &middot; <b>m</b> sound &middot; <b>v</b> voice &middot; <b>f</b> full &middot; <b>a</b> autoplay<br>
   <b>wheel</b> or <b>j</b>/<b>k</b> scroll &middot; <b>ctrl-wheel</b> or <b>+</b>/<b>&minus;</b> zoom &middot;
   <b>shift-wheel</b> sideways &middot; <b>0</b> refit and follow &middot; <b>c</b> context &middot; <b>l</b> overlay &middot; <b>g</b>/<b>G</b> front/back &middot;
-  <b>s</b> side by side &middot; <b>drag the strip</b> to scrub &middot;
+  <b>w</b> side by side &middot; <b>drag the strip</b> to scrub &middot;
   <b>t</b> theme &middot; <b>drag</b> orbit &middot; <b>?</b> hide this<br>
   every change is typed out: <span class="del">removals erase</span>,
   <span class="add">additions type in</span>
@@ -104,7 +104,7 @@
     <button data-act="overlay" title="both versions at once, removals behind (l)">overlay</button>
     <button data-act="front" title="how solid the additions in front are (g)">front solid</button>
     <button data-act="behind" title="how solid the removals behind are (G)">back solid</button>
-    <button data-act="aside" title="removals in a column of their own (s)">side by side</button>
+    <button data-act="aside" title="removals in a column of their own (w)">side by side</button>
     <button data-act="ctx" title="lines of context around each change (c)">ctx 3</button>
     <button data-act="theme" title="colour theme (t, shift-t back)">tokyo night</button>
     <button data-act="fit" title="back to fit (0)">fit</button>
@@ -1309,7 +1309,7 @@ addEventListener("keydown", (e) => {
   else if (e.key === "l") ACTIONS.overlay();
   else if (e.key === "g") ACTIONS.front();
   else if (e.key === "G") ACTIONS.behind();
-  else if (e.key === "s") ACTIONS.aside();
+  else if (e.key === "w") ACTIONS.aside();
   else if (e.key === "j") scrollRows(3);
   else if (e.key === "k") scrollRows(-3);
   else if (e.key === "PageDown") { e.preventDefault(); scrollRows(WINDOW - 2); }
@@ -1321,8 +1321,8 @@ addEventListener("keydown", (e) => {
   else if (e.key === "v") ACTIONS.voice();
   else if (e.key === "x") ACTIONS.rate(1);
   else if (e.key === "X") ACTIONS.rate(-1);
-  else if (e.key === "ArrowRight" || e.key === "n") goto(at + 1);
-  else if (e.key === "ArrowLeft" || e.key === "p") goto(at - 1);
+  else if (e.key === "e" || e.key === "n") goto(at + 1);
+  else if (e.key === "q" || e.key === "p") goto(at - 1);
   else if (e.key === "a") { auto = !auto; describe(); }
 });
 
