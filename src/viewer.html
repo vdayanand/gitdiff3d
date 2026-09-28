@@ -1101,7 +1101,7 @@ transport.querySelectorAll("button").forEach((element) => {
 
 /* ---------- narration ----------
    A scene may arrive with a note per hunk (why the change exists) and a group
-   label; gitdiff3d never writes these, a host such as gtweb fills them in. The
+   label, written by --explain or by a host such as gtweb. The
    what is ours either way: the diff already knows the file, the symbol and the
    size of the edit, so the voice always has something true to say. */
 const VOICE_KEY = "gitdiff3d-voice";

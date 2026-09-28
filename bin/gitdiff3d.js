@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 const { execFile } = require("node:child_process");
-const { repoRoot, diffText, headLabel, newSideOf, sourceOf } = require("../src/git");
+const { repoRoot, diffText, headLabel, newSideOf, sourceOf, commitMessages } = require("../src/git");
 const { parseDiff } = require("../src/parse-diff");
 const { buildScene } = require("../src/layout");
 const { orderHunks } = require("../src/order");
+const { explain, withNotes, MODEL } = require("../src/explain");
 const { serve } = require("../src/server");
 
 const USAGE = `usage: gitdiff3d [<revs>] [-- <path>...] [options]
@@ -20,12 +21,15 @@ options:
   --order <how>    story (definitions before their callers, schema before docs)
                    or git (the order git prints them in). default: story
   --context <n>    lines of unchanged code around each hunk (default: 8)
+  --explain        ask Claude what each hunk does and why; sends the diff and
+                   commit messages to the Anthropic API (needs ANTHROPIC_API_KEY)
   --json       print the scene model, do not serve
   --no-open    serve without opening a browser
   -h, --help   this message`;
 
 function readArgs(argv) {
-  const flags = { port: 0, json: false, open: true, maxHunks: 0, order: "story", context: 8 };
+  const flags = { port: 0, json: false, open: true, maxHunks: 0, order: "story", context: 8,
+    explain: false };
   const revisions = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -34,6 +38,7 @@ function readArgs(argv) {
     else if (arg === "--order") flags.order = argv[(i += 1)];
     else if (arg === "--context" || arg === "-U") flags.context = Number(argv[(i += 1)]);
     else if (arg === "--json") flags.json = true;
+    else if (arg === "--explain") flags.explain = true;
     else if (arg === "--no-open") flags.open = false;
     else if (arg === "-h" || arg === "--help") flags.help = true;
     else revisions.push(arg);
@@ -71,6 +76,8 @@ async function main() {
   // The player can ask for a wider view of the surrounding code, which means
   // re-running the diff; each width is built once and kept.
   const built = new Map();
+  let notes = null;
+  let narrationError = null;
   const sceneFor = (context) => {
     const lines = context === null ? flags.context : context;
     if (!built.has(lines)) {
@@ -82,9 +89,22 @@ async function main() {
         flags.order,
       ));
     }
-    return built.get(lines);
+    // notes are pinned to changed lines, so they carry over to any width
+    const scene = withNotes(built.get(lines), notes);
+    return narrationError ? { ...scene, meta: { ...scene.meta, narrationError } } : scene;
   };
-  const scene = sceneFor(null);
+  let scene = sceneFor(null);
+
+  // Progress goes to stderr: with --json, stdout is the scene.
+  if (flags.explain && scene.hunks.length > 0) {
+    console.error("explaining " + scene.hunks.length + " hunks with " + MODEL + " ...");
+    const answer = await explain(scene, commitMessages(revisions, root));
+    notes = answer.notes || null;
+    narrationError = answer.error || null;
+    console.error(narrationError ? "no explanations: " + narrationError
+      : "explained " + notes.length + " of " + scene.hunks.length + " hunks");
+    scene = sceneFor(null);
+  }
 
   if (flags.json) {
     console.log(JSON.stringify(scene, null, 2));

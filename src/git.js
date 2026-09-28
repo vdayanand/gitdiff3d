@@ -48,6 +48,32 @@ const newSideOf = (revisions, cwd) => {
   return revs.length > 1 && isCommit(last, cwd) ? last : null;
 };
 
+// The commits a diff spans, when its revisions name any: "a..b", "a...b" and
+// "a b" all show what b added, and "a..b" is how log says that ("a...b" to log
+// would also list a's side). A lone "a" is the working tree against a, which
+// holds whatever was committed since. The index has no messages.
+const rangeOf = (revs, cwd) => {
+  const ranged = revs.find((r) => RANGE.test(r));
+  if (ranged) return ranged.replace("...", "..");
+  if (revs.length === 2 && revs.every((r) => isCommit(r, cwd))) return revs.join("..");
+  if (revs.length === 1 && isCommit(revs[0], cwd)) return revs[0] + "..HEAD";
+  return null;
+};
+
+const commitMessages = (revisions, cwd) => {
+  if (revisions.some((r) => r === "--staged" || r === "--cached")) return "";
+  const revs = beforePathspec(revisions).filter((r) => !r.startsWith("-"));
+  const range = rangeOf(revs, cwd);
+  if (!range) return "";
+  const cut = revisions.indexOf("--");
+  const paths = cut === -1 ? [] : revisions.slice(cut);
+  try {
+    return git(["log", "--no-color", "--format=%B%n---", range, ...paths], cwd);
+  } catch {
+    return "";
+  }
+};
+
 // A diff header is text, and text can say "../../elsewhere"; the working tree
 // is the only place this is allowed to read from. Both sides are resolved
 // because git reports the root with forward slashes even on Windows.
@@ -68,4 +94,4 @@ const sourceOf = (rev, filePath, root) => {
   }
 };
 
-module.exports = { repoRoot, diffText, headLabel, newSideOf, sourceOf };
+module.exports = { repoRoot, diffText, headLabel, newSideOf, sourceOf, commitMessages };
