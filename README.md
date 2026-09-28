@@ -34,11 +34,13 @@ working tree and your edits are live:
 ```
 git clone https://github.com/vdayanand/gitdiff3d
 cd gitdiff3d
+npm install           # only --explain needs it
 make install          # symlinks bin/gitdiff3d.js into ~/bin
 ```
 
-Node 18 or newer. No dependencies: three.js is vendored, everything else is the
-standard library and the `git` already on your path. To remove it, `npm rm -g
+Node 18 or newer. three.js is vendored, everything else is the standard library
+and the `git` already on your path; the one dependency, the Anthropic SDK, is
+loaded only when you ask for `--explain`. To remove it, `npm rm -g
 gitdiff3d`, or `make uninstall` for the checkout.
 
 ## Use
@@ -58,6 +60,7 @@ It builds the scene, serves it on a random local port, and opens your browser.
 --max-hunks <n>   keep only the first n hunks (default: all)
 --order <how>     story or git (default: story)
 --context <n>     lines of unchanged code around each hunk (default: 8)
+--explain         ask Claude what each hunk does and why (see below)
 --json            print the scene model, do not serve
 --no-open         serve without opening a browser
 ```
@@ -92,6 +95,26 @@ probably made: a hunk that introduces a name comes before the hunks that call
 that name, and failing that, schema before models before logic before callers
 before tests before prose. It is a topological sort over "who defines what",
 with the file's role as the tie breaker. `--order git` turns it off.
+
+## Explanations
+
+The diff knows what changed, never why. `--explain` asks Claude: the whole
+change goes in one request, hunks in the order you will see them, with the
+commit messages of the range when there are any, and every hunk comes back with
+a short group label and a sentence or two on what it does, why, and which other
+hunks it leans on. The label and the note sit in a panel over the scene, and `v`
+reads them out after the what.
+
+```
+ANTHROPIC_API_KEY=... gitdiff3d --explain HEAD~3..HEAD
+```
+
+This sends the diff and the commit messages to the Anthropic API, which is why
+it is off unless asked for. The request is made once, before the scene is
+served, and takes as long as the model does; the notes are pinned to the lines
+they describe, so they follow along when `c` merges or splits hunks. If the call
+fails the scene is served anyway and the header says why. It uses
+`claude-opus-5`, with Anthropic's server side fallback should that model decline.
 
 ## Overlay: it defeats change blindness
 

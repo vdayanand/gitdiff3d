@@ -54,7 +54,7 @@ function repoWith(files) {
 }
 
 function modulesLoad() {
-  ["parse-diff", "layout", "structure", "server", "git", "order", "replace"]
+  ["parse-diff", "layout", "structure", "server", "git", "order", "replace", "explain"]
     .forEach((name) => require("./src/" + name));
   ok(true, "modules load");
   execFileSync(process.execPath, [CLI, "--help"], { stdio: "ignore" });
@@ -151,6 +151,46 @@ function carriageReturnsAreDropped() {
   }
 }
 
+// The explanation is asked for once, at one width; widening the context merges
+// hunks and narrowing splits them, and the notes have to follow the lines.
+async function notesFollowTheirLines() {
+  const { explain, withNotes } = require("./src/explain");
+  const body = (n) => Array.from({ length: 12 }, (_, i) => "const v" + i + " = " + n + ";\n").join("");
+  const edit = body(1).replace("v1 = 1", "v1 = 2").replace("v10 = 1", "v10 = 2");
+  const root = repoWith({ before: { "d.js": body(1) }, after: { "d.js": edit } });
+  try {
+    const apart = sceneOf(root, ["-U", "1"]);
+    const merged = sceneOf(root, ["-U", "8"]);
+    ok(apart.hunks.length === 2 && merged.hunks.length === 1, "context width merges two hunks");
+    let asked = null;
+    const client = { beta: { messages: { stream: (params) => {
+      asked = params;
+      const hunks = apart.hunks.map((hunk) => ({ index: hunk.index, group: "Bump", note: "Note " + hunk.index + "." }))
+        .concat([{ index: 99, group: "Stray", note: "Not a hunk." }]);
+      return { finalMessage: async () => ({ stop_reason: "end_turn",
+        content: [{ type: "text", text: JSON.stringify({ hunks }) }] }) };
+    } } } };
+    const { notes, error } = await explain(apart, "", client);
+    ok(!error && notes.length === 2, "an index that names no hunk is dropped");
+    ok(asked.messages[0].content.includes("No commit messages"), "a change without commits is said to be so");
+    const one = withNotes(merged, notes).hunks[0];
+    ok(one.group === "Bump" && one.note === "Note 1. Note 2.", "a merged hunk reads both notes in order");
+    const refused = await explain(apart, "", { beta: { messages: { stream: () => ({
+      finalMessage: async () => ({ stop_reason: "refusal", content: [] }) }) } } });
+    ok(refused.error && !refused.notes, "a refusal is an error, not an empty answer");
+    const answer = JSON.stringify({ hunks: [{ index: 1, group: "Bump", note: "Rescued." }] });
+    const rescued = await explain(apart, "", { beta: { messages: { stream: () => ({
+      finalMessage: async () => ({ stop_reason: "end_turn", content: [
+        { type: "text", text: answer.slice(0, 9) },
+        { type: "fallback", from: { model: "a" }, to: { model: "b" } },
+        { type: "text", text: answer },
+      ] }) }) } } });
+    ok(rescued.notes && rescued.notes.length === 1, "a partial answer before a fallback is set aside");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+  }
+}
+
 async function viewerIsServed() {
   const { serve } = require("./src/server");
   const root = repoWith({
@@ -178,6 +218,7 @@ async function main() {
   scenesHaveSymbols();
   spansFindTheChangedWords();
   carriageReturnsAreDropped();
+  await notesFollowTheirLines();
   await viewerIsServed();
   console.log("all checks passed on " + process.platform + " node " + process.versions.node);
   process.exit(0);
